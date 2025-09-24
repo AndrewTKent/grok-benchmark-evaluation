@@ -1,1 +1,9 @@
-/venv
+venv/
+*.pyc
+__pycache__/
+.env
+.ipynb_checkpoints/
+*.log
+data/cache/
+results/temp/
+.DS_Store
