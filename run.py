@@ -140,8 +140,8 @@ Examples:
                         help="Dataset version (default: terminal-bench-core==0.1.1)")
     parser.add_argument("--task-id", action="append", dest="task_ids",
                         help="Specific task IDs to run (can be used multiple times)")
-    parser.add_argument("--n-concurrent", type=int, default=1,
-                        help="Number of concurrent runs (default: 1)")
+    parser.add_argument("--n-concurrent", type=int, default=5,
+                        help="Number of concurrent runs (default: 5)")
     parser.add_argument("--n-attempts", type=int, default=1,
                         help="Number of attempts per task (default: 1)")
     parser.add_argument("--timeout", type=int, default=300,
