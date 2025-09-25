@@ -78,7 +78,7 @@ python run.py --task-id "task_name_1" --task-id "task_name_2"
 python run.py \
   --dataset terminal-bench-core==0.1.1 \
   --n-concurrent 2 \
-  --n-attempts 2 \
+  --n-attempts 1 \
   --timeout 240 \
   --task-id hello-world \
   --task-id fix-git \
