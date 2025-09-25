@@ -1,4 +1,4 @@
-# Grok Terminal-Bench Evaluation (Fixed Version)
+# Grok Terminal-Bench Evaluation
 
 This repository evaluates Grok on the Terminal-Bench benchmark (from https://github.com/laude-institute/terminal-bench), focusing on AI agent performance in real terminal environments.
 
