@@ -11,6 +11,7 @@ import logging
 import shutil
 import threading
 import glob
+import re  # <-- added
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,6 +21,14 @@ from src.grok_client import GrokClient
 def _shorten(s: str, n: int = 120) -> str:
     s = s or ""
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _sanitize_for_fs(s: str) -> str:
+    """
+    Replace characters that are awkward for file systems with '-'.
+    Keeps alphanumerics, dot, underscore, dash. Everything else -> '-'.
+    """
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", s).strip("-")
 
 
 class _Tailer:
@@ -259,9 +268,9 @@ class TerminalBenchRunner:
                 "message": "Terminal-Bench setup verification failed"
             }
 
-        # Create output directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = Path(f"results/tb_{self.model}_{timestamp}")
+        # Create output directory (timestamp removed from model folder)
+        sanitized_model = _sanitize_for_fs(self.model)
+        output_dir = Path(f"results/tb_{sanitized_model}")
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"\nOutput directory: {output_dir}")
 
