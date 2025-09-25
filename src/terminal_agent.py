@@ -1,6 +1,8 @@
-"""Terminal-Bench Agent implementation for Grok — TB-compatible version"""
+"""Terminal-Bench Agent implementation for Grok — TB-compatible version with progress tracking"""
 import os
 import sys
+import json
+import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -12,6 +14,46 @@ from terminal_bench.agents.failure_mode import FailureMode
 from terminal_bench.terminal.tmux_session import TmuxSession
 
 from src.grok_client import GrokClient
+
+# ---- Progress helpers ----
+from dataclasses import dataclass, asdict
+from typing import Any as _Any, Dict as _Dict, List as _List, Optional as _Optional, Tuple as _Tuple
+
+PROGRESS_PREFIX = "TB_PROGRESS"  # Visible in pane/logs, easy to grep
+
+@dataclass
+class ProgressEvent:
+    ts: float
+    phase: str            # e.g., "init", "plan", "act", "verify", "done"
+    msg: str              # short human hint
+    step: int | None = None
+    total_steps: int | None = None
+    extra: _Dict[str, _Any] | None = None
+
+class ProgressReporter:
+    """Writes JSONL progress + accumulates timestamped markers for AgentResult."""
+    def __init__(self, logging_dir: Optional[Path] = None):
+        self.logging_dir = logging_dir
+        self.jsonl: Optional[Path] = None
+        if logging_dir:
+            logging_dir.mkdir(parents=True, exist_ok=True)
+            self.jsonl = logging_dir / "progress.jsonl"
+        self._markers: List[Tuple[float, str]] = []
+
+    def record(self, event: ProgressEvent) -> Tuple[float, str]:
+        data = asdict(event)
+        # 1) persist to file
+        if self.jsonl:
+            with self.jsonl.open("a") as f:
+                f.write(json.dumps(data) + "\n")
+        # 2) return a compact marker label for AgentResult
+        label = f"{event.phase}:{event.msg}"
+        self._markers.append((event.ts, label))
+        return event.ts, label
+
+    @property
+    def markers(self) -> List[Tuple[float, str]]:
+        return list(self._markers)
 
 
 class GrokTerminalAgent(BaseAgent):
@@ -62,50 +104,83 @@ class GrokTerminalAgent(BaseAgent):
         """
         Execute a task described by `instruction` using the provided tmux `session`.
 
-        This minimal implementation:
-          - Applies an optional Jinja2 prompt template via BaseAgent._render_instruction
-          - Records a timestamped marker using session.get_asciinema_timestamp()
-          - Stores the instruction for inclusion in the system prompt used by get_action()
-          - Returns an AgentResult with required fields
-
-        You can extend this to run a full perception→action loop by:
-          * reading pane output from `session`,
-          * calling `self.get_action(observation)`,
-          * sending commands with `session.send_keys(command)`,
-          * and terminating when you detect completion (e.g., TASK_COMPLETE).
+        Now with progress reporting:
+        • JSONL progress at logging_dir/progress.jsonl
+        • Echoed TB_PROGRESS lines (visible in TB logs and runner console)
+        • timestamped_markers on AgentResult
         """
-        # Honor optional prompt template from BaseAgent
         rendered_instruction = self._render_instruction(instruction)
-
-        # Save task instruction for system prompts
         self.set_task_instruction(rendered_instruction)
 
-        # Example of recording a timestamped marker for the harness
+        # progress reporter
+        progress = ProgressReporter(logging_dir)
         markers: List[Tuple[float, str]] = []
+
+        def now_ts() -> float:
+            try:
+                return session.get_asciinema_timestamp()
+            except Exception:
+                return time.time()
+
+        # init progress
+        ts, label = progress.record(ProgressEvent(
+            ts=now_ts(), phase="init", msg="received_instruction",
+            extra={"chars": len(rendered_instruction)}
+        ))
+        markers.append((ts, label))
         try:
-            ts = session.get_asciinema_timestamp()
-            markers.append((ts, "received_instruction"))
+            self._echo_progress(session, {"phase": "init", "msg": "received_instruction"})
         except Exception:
-            # If session isn't fully initialized for timestamps yet, ignore
             pass
 
-        # If desired, you could do a no-op announcement in the shell (disabled by default):
-        # session.send_keys("echo 'GrokTerminalAgent ready'")
+        # Minimal perception→action loop with progress
+        max_steps = 20
+        for step in range(1, max_steps + 1):
+            observation = self._safe_read_pane(session)
+            cmd = self.get_action(observation)
 
-        # NOTE: Token accounting is model/integration specific; set to 0 if not tracked
-        result = AgentResult(
+            ts, label = progress.record(ProgressEvent(
+                ts=now_ts(), phase="act", msg="next_command",
+                step=step, total_steps=max_steps, extra={"cmd_preview": cmd[:120]}
+            ))
+            markers.append((ts, label))
+            try:
+                self._echo_progress(session, {"phase": "act", "step": step, "total": max_steps})
+            except Exception:
+                pass
+
+            session.send_keys(cmd)
+
+            out = self._safe_read_pane(session)
+            if "TASK_COMPLETE" in out:
+                ts, label = progress.record(ProgressEvent(
+                    ts=now_ts(), phase="done", msg="task_complete", step=step, total_steps=step
+                ))
+                markers.append((ts, label))
+                try:
+                    self._echo_progress(session, {"phase": "done", "msg": "task_complete"})
+                except Exception:
+                    pass
+                break
+
+            if "TASK_FAILED" in out:
+                ts, label = progress.record(ProgressEvent(
+                    ts=now_ts(), phase="done", msg="task_failed", step=step, total_steps=step
+                ))
+                markers.append((ts, label))
+                try:
+                    self._echo_progress(session, {"phase": "done", "msg": "task_failed"})
+                except Exception:
+                    pass
+                break
+
+        return AgentResult(
             total_input_tokens=0,
             total_output_tokens=0,
             failure_mode=FailureMode.NONE,
             timestamped_markers=markers,
         )
 
-        if self.debug:
-            print(f"[GrokTerminalAgent] perform_task: instruction length={len(rendered_instruction)}")
-            if logging_dir:
-                print(f"[GrokTerminalAgent] logging_dir: {logging_dir}")
-
-        return result
 
     # ------------------------- Convenience helpers (optional) -------------------------
 
@@ -283,3 +358,27 @@ What is the next command to execute? Remember: respond with ONLY the command."""
         max_total_history = self.max_history * 2
         if len(self.conversation_history) > max_total_history:
             self.conversation_history = self.conversation_history[-max_total_history:]
+
+    # ------------------------- TB compatibility helpers -------------------------
+
+    def _safe_read_pane(self, session: TmuxSession) -> str:
+        """Try various read methods for different TB versions."""
+        try:
+            return session.read_pane()
+        except Exception:
+            try:
+                return session.capture_pane()
+            except Exception:
+                return ""
+
+    def _single_quote(s: str) -> str:
+        """Safely single-quote a string for POSIX shells."""
+        return "'" + s.replace("'", "'\"'\"'") + "'"
+
+    def _echo_progress(self, session: TmuxSession, obj: dict):
+        """Echo a TB_PROGRESS line with safe quoting and guaranteed newline."""
+        payload = json.dumps(obj, ensure_ascii=False)
+        line = f"{PROGRESS_PREFIX} {payload}"
+        # Use printf with safe single-quoting (more robust than echo for JSON)
+        cmd = f"printf %s\\n {_single_quote(line)}"
+        session.send_keys(cmd)
