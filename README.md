@@ -72,7 +72,7 @@ python run.py --list-tasks
 python run.py --task-id "task_name_1" --task-id "task_name_2"
 ```
 
-### Run Specific Tasks (Nice Subset)
+### Run Specific Tasks
 ```bash
 # Run one or more specific tasks
 python run.py \
@@ -90,7 +90,7 @@ python run.py \
   --task-id crack-7z-hash.easy
 ```
 
-### Run Easy Specific Tasks
+### Run 4 Easy Tasks
 ```bash
 # Run one or more specific tasks
 python run.py \
@@ -104,7 +104,7 @@ python run.py \
   --task-id heterogeneous-dates 
 ```
 
-### Run Hard Specific Tasks
+### Run 4 Hard Tasks
 ```bash
 # Run one or more specific tasks
 python run.py \
