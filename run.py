@@ -86,29 +86,67 @@ def run_quick_test(runner: TerminalBenchRunner) -> int:
 
 
 def list_available_tasks() -> None:
-    """List available tasks in Terminal-Bench"""
+    """List available tasks in Terminal-Bench (from the downloaded dataset)."""
+    import re
+    from pathlib import Path
+
     print("=" * 60)
     print("AVAILABLE TERMINAL-BENCH TASKS")
     print("=" * 60)
 
+    dataset_spec = "terminal-bench-core==0.1.1"
+    dataset_name, dataset_ver = dataset_spec.split("==", 1)
+
+    # 1) Ensure dataset is downloaded and capture its location from CLI output
     try:
-        # Try to list tasks using tb CLI
-        result = subprocess.run(
-            ["tb", "list-tasks", "--dataset", "terminal-bench-core==0.1.1"],
+        dl = subprocess.run(
+            ["tb", "datasets", "download", "--dataset", dataset_spec],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=120,
         )
-
-        if result.returncode == 0:
-            print(result.stdout)
-        else:
-            print("Could not list tasks. Terminal-Bench may need to download the dataset first.")
-            print("Try running: tb list-tasks --dataset terminal-bench-core==0.1.1")
     except FileNotFoundError:
-        print("Terminal-Bench CLI (tb) not found. Run: pip install terminal-bench")
+        print("❌ Terminal-Bench CLI (tb) not found. Install with: pip install terminal-bench")
+        return
     except Exception as e:
-        print(f"Error listing tasks: {e}")
+        print(f"❌ Error invoking tb datasets download: {e}")
+        return
+
+    # Try to parse the dataset path from stdout/stderr
+    m = re.search(r"Dataset location:\s*(.+)", dl.stdout) or re.search(r"Dataset location:\s*(.+)", dl.stderr)
+    if m:
+        dataset_path = Path(m.group(1).strip())
+    else:
+        # Fallback to default cache path
+        dataset_path = Path.home() / ".cache" / "terminal-bench" / dataset_name / dataset_ver
+
+    if not dataset_path.exists():
+        print(f"❌ Dataset path not found: {dataset_path}")
+        return
+
+    # 2) List tasks: in current TB builds, each task is a top-level directory under the dataset path
+    try:
+        entries = sorted(p.name for p in dataset_path.iterdir() if p.is_dir())
+        # Prefer entries that look like real tasks (contain task.yaml), otherwise show all directories
+        task_dirs = [name for name in entries if (dataset_path / name / "task.yaml").exists()]
+        tasks = task_dirs if task_dirs else entries
+
+        if not tasks:
+            print(f"⚠️  No tasks found under: {dataset_path}")
+            return
+
+        print(f"📁 Dataset: {dataset_name}@{dataset_ver}")
+        print(f"📂 Location: {dataset_path}")
+        print(f"📝 {len(tasks)} tasks:\n")
+        for t in tasks:
+            print(f"- {t}")
+
+        print("\nTip: run a single task with:")
+        print(f"  tb run --dataset {dataset_spec} --task {tasks[0]}  # example")
+
+    except Exception as e:
+        print(f"❌ Error listing tasks: {e}")
+
 
 
 def main() -> int:
