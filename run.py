@@ -50,7 +50,7 @@ def run_quick_test(runner):
         test_results = runner.run_with_tb_cli(
             dataset="terminal-bench-core==0.1.1",
             task_ids=None,  # Let TB choose
-            n_concurrent=1,
+            n_concurrent=20,
             n_attempts=1,
             timeout_per_task=60  # 1 minute timeout for quick test
         )
