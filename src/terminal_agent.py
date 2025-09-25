@@ -1,10 +1,11 @@
-"""Terminal-Bench Agent implementation for Grok — TB-compatible version with progress tracking"""
+"""Terminal-Bench Agent implementation for Grok — TB-compatible version with progress tracking (fixed)"""
 import os
 import sys
 import json
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
+from dataclasses import dataclass, asdict
 
 # Add parent dir to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,20 +16,20 @@ from terminal_bench.terminal.tmux_session import TmuxSession
 
 from src.grok_client import GrokClient
 
-# ---- Progress helpers ----
-from dataclasses import dataclass, asdict
-from typing import Any as _Any, Dict as _Dict, List as _List, Optional as _Optional, Tuple as _Tuple
-
 PROGRESS_PREFIX = "TB_PROGRESS"  # Visible in pane/logs, easy to grep
+
+
+# ---- Progress helpers ----
 
 @dataclass
 class ProgressEvent:
     ts: float
     phase: str            # e.g., "init", "plan", "act", "verify", "done"
     msg: str              # short human hint
-    step: int | None = None
-    total_steps: int | None = None
-    extra: _Dict[str, _Any] | None = None
+    step: Optional[int] = None
+    total_steps: Optional[int] = None
+    extra: Optional[Dict[str, Any]] = None
+
 
 class ProgressReporter:
     """Writes JSONL progress + accumulates timestamped markers for AgentResult."""
@@ -44,8 +45,13 @@ class ProgressReporter:
         data = asdict(event)
         # 1) persist to file
         if self.jsonl:
-            with self.jsonl.open("a") as f:
-                f.write(json.dumps(data) + "\n")
+            with self.jsonl.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(data, ensure_ascii=False) + "\n")
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
         # 2) return a compact marker label for AgentResult
         label = f"{event.phase}:{event.msg}"
         self._markers.append((event.ts, label))
@@ -64,8 +70,7 @@ class GrokTerminalAgent(BaseAgent):
       - name() -> str
       - perform_task(instruction: str, session: TmuxSession, logging_dir: Path | None) -> AgentResult
 
-    Also includes a stateless helper method get_action(observation) returning the next shell command
-    when you wire it into a tmux loop (optional; not mandated by BaseAgent).
+    Also includes a stateless helper method get_action(observation) returning the next shell command.
     """
 
     def __init__(self, model: str = None, **kwargs):
@@ -99,12 +104,12 @@ class GrokTerminalAgent(BaseAgent):
         self,
         instruction: str,
         session: TmuxSession,
-        logging_dir: Path | None = None,
+        logging_dir: Optional[Path] = None,
     ) -> AgentResult:
         """
         Execute a task described by `instruction` using the provided tmux `session`.
 
-        Now with progress reporting:
+        Progress reporting:
         • JSONL progress at logging_dir/progress.jsonl
         • Echoed TB_PROGRESS lines (visible in TB logs and runner console)
         • timestamped_markers on AgentResult
@@ -141,7 +146,7 @@ class GrokTerminalAgent(BaseAgent):
 
             ts, label = progress.record(ProgressEvent(
                 ts=now_ts(), phase="act", msg="next_command",
-                step=step, total_steps=max_steps, extra={"cmd_preview": cmd[:120]}
+                step=step, total_steps=max_steps, extra={"cmd_preview": (cmd or "")[:160]}
             ))
             markers.append((ts, label))
             try:
@@ -149,6 +154,7 @@ class GrokTerminalAgent(BaseAgent):
             except Exception:
                 pass
 
+            # Send the command
             session.send_keys(cmd)
 
             out = self._safe_read_pane(session)
@@ -181,18 +187,17 @@ class GrokTerminalAgent(BaseAgent):
             timestamped_markers=markers,
         )
 
+    # ------------------------- Convenience helpers -------------------------
 
-    # ------------------------- Convenience helpers (optional) -------------------------
-
-    def reset(self):
-        """Reset agent state between tasks (not required by BaseAgent but useful)."""
+    def reset(self) -> None:
+        """Reset agent state between tasks."""
         self.conversation_history = []
         self.step_count = 0
         self.current_task_instruction = None
         if self.debug:
             print("[GrokTerminalAgent] Agent reset for new task")
 
-    def set_task_instruction(self, instruction: str):
+    def set_task_instruction(self, instruction: str) -> None:
         """Keep the instruction available for prompting the model."""
         self.current_task_instruction = instruction
         if self.debug:
@@ -201,8 +206,7 @@ class GrokTerminalAgent(BaseAgent):
 
     def get_action(self, observation: str) -> str:
         """
-        Stateless helper to convert terminal observation into the next shell command.
-        Wire this into a loop that reads from `session` and calls `session.send_keys(...)`.
+        Convert terminal observation into the next shell command.
         """
         self.step_count += 1
 
@@ -290,7 +294,7 @@ What is the next command to execute? Remember: respond with ONLY the command."""
     # ------------------------- Command cleaning/validation -------------------------
 
     def _clean_command(self, raw_response: str) -> str:
-        command = raw_response.strip()
+        command = (raw_response or "").strip()
         if "```" in command:
             parts = command.split("```")
             if len(parts) >= 2:
@@ -300,9 +304,8 @@ What is the next command to execute? Remember: respond with ONLY the command."""
                         command = command[len(lang):]
         command = command.strip("`").strip()
 
-        lines = command.split("\n")
+        lines = [ln.strip() for ln in command.split("\n") if ln.strip()]
         for line in lines:
-            line = line.strip()
             if any(line.startswith(cmd) for cmd in [
                 "ls", "cd", "echo", "cat", "grep", "find", "mkdir", "touch",
                 "rm", "mv", "cp", "pwd", "export", "source", "./", "python",
@@ -310,7 +313,7 @@ What is the next command to execute? Remember: respond with ONLY the command."""
                 "apt", "pip", "npm", "make", "gcc", "test", "["
             ]):
                 return line
-        return command
+        return lines[0] if lines else command
 
     def _validate_command(self, command: str, observation: str) -> str:
         if not command or command.isspace():
@@ -345,7 +348,7 @@ What is the next command to execute? Remember: respond with ONLY the command."""
 
     # ------------------------- History maintenance -------------------------
 
-    def _update_history(self, observation: str, command: str):
+    def _update_history(self, observation: str, command: str) -> None:
         obs_for_history = observation[:500] if len(observation) > 500 else observation
         self.conversation_history.append({
             "role": "user",
@@ -371,14 +374,15 @@ What is the next command to execute? Remember: respond with ONLY the command."""
             except Exception:
                 return ""
 
+    @staticmethod
     def _single_quote(s: str) -> str:
         """Safely single-quote a string for POSIX shells."""
         return "'" + s.replace("'", "'\"'\"'") + "'"
 
-    def _echo_progress(self, session: TmuxSession, obj: dict):
+    def _echo_progress(self, session: TmuxSession, obj: dict) -> None:
         """Echo a TB_PROGRESS line with safe quoting and guaranteed newline."""
         payload = json.dumps(obj, ensure_ascii=False)
         line = f"{PROGRESS_PREFIX} {payload}"
         # Use printf with safe single-quoting (more robust than echo for JSON)
-        cmd = f"printf %s\\n {_single_quote(line)}"
+        cmd = f"printf %s\\n {self._single_quote(line)}"
         session.send_keys(cmd)
