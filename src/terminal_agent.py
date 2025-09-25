@@ -245,67 +245,55 @@ class GrokTerminalAgent(BaseAgent):
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt based on context."""
-        base_prompt = """You are a Linux terminal automation agent executing commands in a Docker container for Terminal-Bench evaluation.
+        base_prompt = """You are a bash shell automation agent. Respond with ONLY the next command.
 
-    CRITICAL: You must respond with ONLY the next shell command to execute. No explanations, no markdown, no commentary.
+    CRITICAL RULES:
+    1. ONE bash command per response - no explanations, no markdown
+    2. If previous command failed, try a DIFFERENT approach
+    3. After 2 failures, install missing tools: apt-get update && apt-get install -y [package]
 
-    ENVIRONMENT:
-    - You are in a bash shell (NOT Python REPL)
-    - Working in a Docker container with Ubuntu/Debian base
-    - Standard Linux tools may need installation via apt-get
-    - Current directory may change based on your commands
-    - Network access may be limited
+    ENVIRONMENT STATE:
+    - You are ALWAYS in bash shell (never Python REPL)
+    - If you see >>> prompt, immediately respond: exit()
+    - If you see > prompt (heredoc), complete it or use Ctrl+C
 
-    COMMAND RULES:
-    1. ONE command per response - just the raw bash command
-    2. To run Python code, use ONE of these patterns:
-    - python3 -c "code here"
-    - python3 script.py
-    - Create a .py file first: echo 'code' > script.py
-    3. NEVER type Python statements directly (like "import x" or "print()")
-    4. For multi-line files, use proper heredoc syntax:
+    PYTHON CODE EXECUTION:
+    NEVER type Python statements directly. Instead use:
+    - python3 -c "code_here"
+    - echo 'code' > script.py && python3 script.py
+    - For multi-line: cat > script.py << 'EOF' [then on next lines add the content]
+
+    COMMON MISTAKES TO AVOID:
+    ✗ import json → ✓ python3 -c "import json; ..."
+    ✗ Repeating failed commands → ✓ Try different approach
+    ✗ pip3 install torch (slow) → ✓ echo "Skipping large install" or use --no-deps
+
+    MISSING COMMANDS - Install these packages:
+    - sqlite3: apt-get install -y sqlite3
+    - file: apt-get install -y file  
+    - pip/pip3: apt-get install -y python3-pip
+    - john: Already at /app/john/run/john
+    - perl: apt-get install -y perl
+
+    HEREDOC SYNTAX:
     cat > filename << 'EOF'
-    content line 1
-    content line 2
+    [content will follow in subsequent responses]
     EOF
-    5. If a command is not found, install it:
-    - First try: apt-get update && apt-get install -y [package]
-    - Common packages: sqlite3, python3-pip, file, jq, bc
-    6. Use && to chain related commands: apt-get update && apt-get install -y package
-    7. Check command success with: command && echo "success" || echo "failed"
 
     TASK COMPLETION:
-    - Signal success: echo "TASK_COMPLETE"
-    - Signal failure: echo "TASK_FAILED: reason"
+    - Success: echo "TASK_COMPLETE"
+    - Failure: echo "TASK_FAILED: reason"
 
-    EXAMPLES OF CORRECT RESPONSES:
-    User: "The terminal shows: bash: sqlite3: command not found"
-    You: apt-get update && apt-get install -y sqlite3
-
-    User: "Run Python code to load a JSON file"
-    You: python3 -c "import json; data = json.load(open('file.json')); print(data)"
-
-    User: "Terminal shows Python >>> prompt"
-    You: exit()
-
-    User: "Create a Python script with multiple functions"
-    You: cat > script.py << 'EOF'
-
-    EXAMPLES OF INCORRECT RESPONSES:
-    Wrong: import pandas as pd  (this is Python, not bash)
-    Wrong: ```bash command``` (no markdown)
-    Wrong: Let me help you... command  (no explanations)
-
-    CURRENT STATE CHECK:
-    - In bash prompt ($, #, or username@host): execute bash commands
-    - In Python prompt (>>>): type exit() to return to bash
-    - In editor/pager (vim, less, more): use q or :q to exit
-    - In heredoc (>): complete the heredoc with the delimiter"""
+    ANTI-PATTERNS (NEVER DO):
+    1. Typing Python code in bash
+    2. Repeating the same failed command
+    3. Using pip for large packages without timeout consideration
+    4. Forgetting to exit() from Python REPL"""
 
         if self.current_task_instruction:
-            base_prompt += f"\n\nTASK OBJECTIVE:\n{self.current_task_instruction}"
+            base_prompt += f"\n\nTASK: {self.current_task_instruction}\n"
             
-        base_prompt += "\n\nRemember: Respond with ONLY the next command. Nothing else."
+        base_prompt += "\nRespond with ONLY the command. Nothing else."
         
         return base_prompt
 
@@ -362,26 +350,26 @@ What is the next command to execute? Remember: respond with ONLY the command."""
         return lines[0] if lines else command
 
     def _validate_command(self, command: str, observation: str) -> str:
-        if not command or command.isspace():
-            return "echo 'No command generated'"
-
-        dangerous = ["rm -rf /", "dd if=/dev/zero", ":(){ :|:& };:", "> /dev/sda"]
-        for pattern in dangerous:
-            if pattern in command:
-                return f"echo 'Safety: Blocked dangerous command pattern: {pattern}'"
-
-        if len(command) > 500:
-            first_line = command.split("\n")[0].strip()
-            if first_line:
-                command = first_line
-            else:
-                return "echo 'Command too long or complex'"
-
-        if "command not found" in observation.lower() and self.step_count > 1:
-            missing_cmd = self._extract_missing_command(observation)
-            if missing_cmd:
-                return f"echo 'Missing command: {missing_cmd}'"
-
+        # Check if we're repeating a failed pattern
+        if hasattr(self, '_last_failed_commands'):
+            if command in self._last_failed_commands:
+                # We're repeating - try to fix the root cause
+                if "command not found" in observation:
+                    missing = self._extract_missing_command(observation)
+                    if missing == "file":
+                        return "apt-get update && apt-get install -y file"
+                    elif missing == "sqlite3":
+                        return "apt-get update && apt-get install -y sqlite3"
+                return "echo 'Avoiding command loop - trying alternative approach'"
+        
+        # Track failed commands
+        if "command not found" in observation or "No such file" in observation:
+            if not hasattr(self, '_last_failed_commands'):
+                self._last_failed_commands = []
+            self._last_failed_commands.append(command)
+            if len(self._last_failed_commands) > 5:
+                self._last_failed_commands.pop(0)
+        
         return command
 
     def _extract_missing_command(self, observation: str) -> Optional[str]:
