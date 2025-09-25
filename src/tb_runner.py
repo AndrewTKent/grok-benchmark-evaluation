@@ -7,6 +7,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import time
+import logging
+import shutil
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -43,27 +45,38 @@ class TerminalBenchRunner:
         """Verify Terminal-Bench is properly installed and configured"""
         print("\nVerifying Terminal-Bench setup...")
         checks_passed = True
+        logger = logging.getLogger(__name__)
         
-        # Check if tb CLI is available
-        try:
-            result = subprocess.run(
-                ["tb", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                print(f"✓ Terminal-Bench CLI found: {result.stdout.strip()}")
-            else:
-                print("✗ Terminal-Bench CLI not working properly")
-                checks_passed = False
-        except FileNotFoundError:
+        # Check if tb CLI is in PATH
+        if shutil.which('tb') is None:
             print("✗ Terminal-Bench CLI (tb) not found in PATH")
             print("  Try: pip install terminal-bench")
+            logger.error("Terminal-Bench CLI (tb) not found in PATH")
             checks_passed = False
-        except Exception as e:
-            print(f"✗ Error checking Terminal-Bench: {e}")
-            checks_passed = False
+        else:
+            # Check if tb CLI is operational
+            try:
+                result = subprocess.run(
+                    ["tb", "--help"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15  # Increased timeout to handle slow execution
+                )
+                if result.returncode == 0:
+                    print("✓ Terminal-Bench CLI is operational")
+                    logger.info("Terminal-Bench CLI check passed")
+                else:
+                    print(f"✗ Terminal-Bench CLI failed: {result.stderr.strip()}")
+                    logger.error(f"Terminal-Bench CLI failed: {result.stderr}")
+                    checks_passed = False
+            except subprocess.TimeoutExpired:
+                print("✗ Terminal-Bench CLI timed out after 15 seconds")
+                logger.error("Terminal-Bench CLI timed out after 15 seconds")
+                checks_passed = False
+            except Exception as e:
+                print(f"✗ Error checking Terminal-Bench: {str(e)}")
+                logger.error(f"Error checking Terminal-Bench: {str(e)}")
+                checks_passed = False
         
         # Check if Docker is running
         try:
@@ -75,21 +88,30 @@ class TerminalBenchRunner:
             )
             if result.returncode == 0:
                 print("✓ Docker is running")
+                logger.info("Docker check passed")
             else:
                 print("✗ Docker is not running")
                 print("  Start Docker and try again")
+                logger.error(f"Docker check failed: {result.stderr}")
                 checks_passed = False
         except FileNotFoundError:
             print("✗ Docker not found")
             print("  Terminal-Bench requires Docker")
+            logger.error("Docker not found")
+            checks_passed = False
+        except Exception as e:
+            print(f"✗ Error checking Docker: {str(e)}")
+            logger.error(f"Error checking Docker: {str(e)}")
             checks_passed = False
         
         # Check if our agent module is importable
         try:
             from src.terminal_agent import GrokTerminalAgent
             print("✓ GrokTerminalAgent module is importable")
+            logger.info("GrokTerminalAgent import check passed")
         except ImportError as e:
-            print(f"✗ Cannot import GrokTerminalAgent: {e}")
+            print(f"✗ Cannot import GrokTerminalAgent: {str(e)}")
+            logger.error(f"Cannot import GrokTerminalAgent: {str(e)}")
             checks_passed = False
         
         return checks_passed

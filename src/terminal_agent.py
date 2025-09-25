@@ -7,9 +7,11 @@ from typing import Dict, Any, List, Optional
 # Add parent dir to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from terminal_bench.agents.base_agent import BaseAgent
 from src.grok_client import GrokClient
 
-class GrokTerminalAgent:
+
+class GrokTerminalAgent(BaseAgent):
     """
     Terminal-Bench compatible agent that uses Grok.
     
@@ -21,7 +23,7 @@ class GrokTerminalAgent:
     """
     
     def __init__(self, model: str = None, **kwargs):
-        """Initialize the Grok agent with API client and conversation tracking."""
+        super().__init__(**kwargs)  # BaseAgent init
         self.model = model or os.getenv('GROK_MODEL', 'grok-2-1212')
         self.client = GrokClient(model=self.model)
         self.conversation_history = []

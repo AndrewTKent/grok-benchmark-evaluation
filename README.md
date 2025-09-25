@@ -37,17 +37,22 @@ echo "GROK_MODEL=grok-2-1212" >> .env  # or grok-beta
 # 4. Activate virtual environment
 source venv/bin/activate
 
-# 5. Run diagnostics to verify setup
-python diagnostic.py
+# 5. Install Terminal-Bench
+pip install terminal-bench
+tb --version  # Verify installation
+
+# 6. Download the terminal-bench-core dataset
+tb datasets download --dataset terminal-bench-core==  # Downloads latest version (head)
+# For a specific version, e.g., 0.1.1:
+# tb datasets download --dataset terminal-bench-core==0.1.1
+# To overwrite existing dataset: add --overwrite
+# To specify output directory: add --output-dir /path/to/dir
+
+# 7. Run diagnostics to verify setup
+python run.py --test
 ```
 
 ## 🧪 Testing & Running
-
-### Diagnostic Test (Run First!)
-```bash
-# Verify everything is set up correctly
-python diagnostic.py
-```
 
 ### Quick Test
 ```bash

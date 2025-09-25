@@ -2,6 +2,7 @@
 """
 Main runner for Terminal-Bench with Grok evaluation - Fixed Version
 """
+import os
 import sys
 import json
 import argparse
@@ -11,6 +12,8 @@ from datetime import datetime
 
 # Add imports
 from src.tb_runner import TerminalBenchRunner
+
+os.system('clear') 
 
 def run_quick_test(runner):
     """Run a quick test with a simple task"""
