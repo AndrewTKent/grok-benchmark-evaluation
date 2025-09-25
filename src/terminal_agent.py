@@ -1,3 +1,4 @@
+# src/terminal_agent.py
 """Terminal-Bench Agent implementation for Grok — TB-compatible version with progress tracking (fixed)"""
 import os
 import sys
@@ -154,8 +155,9 @@ class GrokTerminalAgent(BaseAgent):
             except Exception:
                 pass
 
-            # Send the command
-            session.send_keys(cmd)
+            # Send the command (always press Enter in a TB-compatible way)
+            self._send_with_enter(session, cmd)
+            time.sleep(0.2)
 
             out = self._safe_read_pane(session)
             if "TASK_COMPLETE" in out:
@@ -243,24 +245,68 @@ class GrokTerminalAgent(BaseAgent):
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt based on context."""
-        base_prompt = """You are an AI agent operating in a Linux terminal environment through Terminal-Bench.
-You receive terminal output and must respond with shell commands to complete tasks.
+        base_prompt = """You are a Linux terminal automation agent executing commands in a Docker container for Terminal-Bench evaluation.
 
-CRITICAL RULES:
-1. Respond with ONLY the command to execute - no explanations, no markdown, no commentary
-2. Use proper bash syntax
-3. Be careful with file operations - use absolute paths when needed
-4. Check for command success before proceeding
-5. If you need to signal task completion, use: echo "TASK_COMPLETE"
-6. If you encounter an error you cannot resolve, use: echo "TASK_FAILED: <reason>"
+    CRITICAL: You must respond with ONLY the next shell command to execute. No explanations, no markdown, no commentary.
 
-EXECUTION CONTEXT:
-- You are in a Docker container with standard Linux tools
-- The working directory may change based on your commands
-- Files you create persist within the task session
-- Network access may be limited"""
+    ENVIRONMENT:
+    - You are in a bash shell (NOT Python REPL)
+    - Working in a Docker container with Ubuntu/Debian base
+    - Standard Linux tools may need installation via apt-get
+    - Current directory may change based on your commands
+    - Network access may be limited
+
+    COMMAND RULES:
+    1. ONE command per response - just the raw bash command
+    2. To run Python code, use ONE of these patterns:
+    - python3 -c "code here"
+    - python3 script.py
+    - Create a .py file first: echo 'code' > script.py
+    3. NEVER type Python statements directly (like "import x" or "print()")
+    4. For multi-line files, use proper heredoc syntax:
+    cat > filename << 'EOF'
+    content line 1
+    content line 2
+    EOF
+    5. If a command is not found, install it:
+    - First try: apt-get update && apt-get install -y [package]
+    - Common packages: sqlite3, python3-pip, file, jq, bc
+    6. Use && to chain related commands: apt-get update && apt-get install -y package
+    7. Check command success with: command && echo "success" || echo "failed"
+
+    TASK COMPLETION:
+    - Signal success: echo "TASK_COMPLETE"
+    - Signal failure: echo "TASK_FAILED: reason"
+
+    EXAMPLES OF CORRECT RESPONSES:
+    User: "The terminal shows: bash: sqlite3: command not found"
+    You: apt-get update && apt-get install -y sqlite3
+
+    User: "Run Python code to load a JSON file"
+    You: python3 -c "import json; data = json.load(open('file.json')); print(data)"
+
+    User: "Terminal shows Python >>> prompt"
+    You: exit()
+
+    User: "Create a Python script with multiple functions"
+    You: cat > script.py << 'EOF'
+
+    EXAMPLES OF INCORRECT RESPONSES:
+    Wrong: import pandas as pd  (this is Python, not bash)
+    Wrong: ```bash command``` (no markdown)
+    Wrong: Let me help you... command  (no explanations)
+
+    CURRENT STATE CHECK:
+    - In bash prompt ($, #, or username@host): execute bash commands
+    - In Python prompt (>>>): type exit() to return to bash
+    - In editor/pager (vim, less, more): use q or :q to exit
+    - In heredoc (>): complete the heredoc with the delimiter"""
+
         if self.current_task_instruction:
-            base_prompt += f"\n\nCURRENT TASK:\n{self.current_task_instruction}"
+            base_prompt += f"\n\nTASK OBJECTIVE:\n{self.current_task_instruction}"
+            
+        base_prompt += "\n\nRemember: Respond with ONLY the next command. Nothing else."
+        
         return base_prompt
 
     def _build_messages(self, system_prompt: str, observation: str) -> List[Dict[str, str]]:
@@ -383,6 +429,21 @@ What is the next command to execute? Remember: respond with ONLY the command."""
         """Echo a TB_PROGRESS line with safe quoting and guaranteed newline."""
         payload = json.dumps(obj, ensure_ascii=False)
         line = f"{PROGRESS_PREFIX} {payload}"
-        # Use printf with safe single-quoting (more robust than echo for JSON)
         cmd = f"printf %s\\n {self._single_quote(line)}"
-        session.send_keys(cmd)
+        self._send_with_enter(session, cmd)
+
+    # ---- unified “press Enter” sending (handles TB versions without enter= kwarg) ----
+    def _send_with_enter(self, session: TmuxSession, text: str) -> None:
+        """Send text and then an Enter in a way compatible with multiple TB versions."""
+        try:
+            # Most tmux bindings will accept literal newline appended
+            session.send_keys((text or "") + "\n")
+        except TypeError:
+            # Fallback: send text, then send a standalone newline
+            try:
+                session.send_keys(text or "")
+                session.send_keys("\n")
+            except Exception:
+                # Last resort: try carriage return
+                session.send_keys(text or "")
+                session.send_keys("\r")
