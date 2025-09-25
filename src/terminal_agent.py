@@ -279,3 +279,18 @@ What is the next command to execute? Remember: respond with ONLY the command."""
         if len(self.conversation_history) > max_total_history:
             # Keep only the most recent exchanges
             self.conversation_history = self.conversation_history[-max_total_history:]
+
+    @classmethod
+    def name(self) -> str:
+        """Return the name of this agent (required by BaseAgent)."""
+        return "GrokTerminalAgent"
+
+    def perform_task(self, task: str) -> str:
+        """
+        Execute a full task instruction (required by BaseAgent).
+        
+        In Terminal-Bench, tasks are executed step-by-step via get_action(),
+        so here we just set the instruction and return an initial message.
+        """
+        self.set_task_instruction(task)
+        return f"Task instruction set: {task}"
