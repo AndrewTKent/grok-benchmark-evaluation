@@ -72,6 +72,24 @@ python run.py --list-tasks
 python run.py --task-id "task_name_1" --task-id "task_name_2"
 ```
 
+### Run Specific Tasks (Nice Subset)
+```bash
+# Run one or more specific tasks
+python run.py \
+  --dataset terminal-bench-core==0.1.1 \
+  --n-concurrent 2 \
+  --n-attempts 2 \
+  --timeout 240 \
+  --task-id hello-world \
+  --task-id fix-git \
+  --task-id fix-permissions \
+  --task-id sqlite-db-truncate \
+  --task-id csv-to-parquet \
+  --task-id heterogeneous-dates \
+  --task-id pytorch-model-cli.easy \
+  --task-id crack-7z-hash.easy
+```
+
 ### Full Benchmark
 ```bash
 # Run complete benchmark (may take time and API credits)
