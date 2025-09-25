@@ -2,7 +2,7 @@
 
 #####################################################################
 #  Enhanced Setup Script for Grok Terminal-Bench Evaluation        #
-#  Version 2.0 - With Terminal-Bench CLI timeout fixes             #
+#  Version 2.1 - Prefer Python 3.12 + venv-first execution         #
 #####################################################################
 
 clear
@@ -29,39 +29,13 @@ print_header() {
     echo -e "${BLUE}${BOLD}═══════════════════════════════════════════════════════${NC}\n"
 }
 
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-print_success() {
-    echo -e "${GREEN}[✓]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[!]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[✗]${NC} $1"
-}
+print_status()  { echo -e "${BLUE}[INFO]${NC} $1"; }
+print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
+print_error()   { echo -e "${RED}[✗]${NC} $1"; }
 
 check_command() {
-    if command -v $1 &> /dev/null; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-check_python_version() {
-    if check_command python3; then
-        version=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
-        required=$1
-        if [ "$(printf '%s\n' "$required" "$version" | sort -V | head -n1)" = "$required" ]; then
-            return 0
-        fi
-    fi
-    return 1
+    command -v "$1" >/dev/null 2>&1
 }
 
 # Parse arguments
@@ -72,22 +46,10 @@ FIX_TB_CLI=true  # New flag for fixing tb CLI issues
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --force|-f)
-            FORCE_REINSTALL=true
-            shift
-            ;;
-        --skip-tests)
-            SKIP_TESTS=true
-            shift
-            ;;
-        --no-clone-tbench)
-            CLONE_TBENCH=false
-            shift
-            ;;
-        --no-fix-tb)
-            FIX_TB_CLI=false
-            shift
-            ;;
+        --force|-f)         FORCE_REINSTALL=true; shift ;;
+        --skip-tests)       SKIP_TESTS=true; shift ;;
+        --no-clone-tbench)  CLONE_TBENCH=false; shift ;;
+        --no-fix-tb)        FIX_TB_CLI=false; shift ;;
         --help|-h)
             echo "Usage: ./setup.sh [OPTIONS]"
             echo "Options:"
@@ -98,14 +60,11 @@ while [[ $# -gt 0 ]]; do
             echo "  -h, --help          Show this help message"
             exit 0
             ;;
-        *)
-            print_error "Unknown option: $1"
-            exit 1
-            ;;
+        *) print_error "Unknown option: $1"; exit 1 ;;
     esac
 done
 
-print_header "Terminal-Bench (T-Bench) Environment Setup v2.0"
+print_header "Terminal-Bench (T-Bench) Environment Setup v2.1"
 
 # ASCII art for T-Bench
 echo -e "${BLUE}"
@@ -122,14 +81,26 @@ echo -e "${NC}"
 # 1. Check system dependencies
 print_header "Checking System Dependencies"
 
-# Check Python
-if check_python_version $PYTHON_MIN_VERSION; then
-    version=$(python3 --version)
-    print_success "Python installed: $version"
+# Decide Python interpreter: prefer python3.12
+PY=""
+if check_command python3.12; then
+  PY="python3.12"
+elif check_command python3; then
+  PY="python3"
 else
-    print_error "Python $PYTHON_MIN_VERSION+ is required"
-    exit 1
+  print_error "No python3 found. Please install Python ${PYTHON_MIN_VERSION}+."
+  exit 1
 fi
+
+# Verify chosen interpreter meets minimum version
+ver="$($PY -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')"
+req="${PYTHON_MIN_VERSION}"
+if [ "$(printf '%s\n' "$req" "$ver" | sort -V | head -n1)" != "$req" ]; then
+  print_error "Found $($PY --version 2>&1). Python ${PYTHON_MIN_VERSION}+ is required."
+  print_error "Install python3.12 (e.g., deadsnakes on Ubuntu) and rerun."
+  exit 1
+fi
+print_success "Using Python interpreter: $($PY --version 2>&1)"
 
 # Check git
 if check_command git; then
@@ -142,9 +113,7 @@ fi
 # Check Docker (REQUIRED for terminal-bench)
 if check_command docker; then
     print_success "Docker is installed"
-    
-    # Check if Docker is running
-    if docker info > /dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
         print_success "Docker daemon is running"
     else
         print_error "Docker is installed but not running. Please start Docker."
@@ -159,180 +128,167 @@ fi
 # 2. Setup Python virtual environment
 print_header "Python Virtual Environment"
 
-if [ -d "$VENV_DIR" ] && [ ! "$FORCE_REINSTALL" = true ]; then
+if [ -d "$VENV_DIR" ] && [ "$FORCE_REINSTALL" = false ]; then
     print_status "Virtual environment exists, activating..."
-    source $VENV_DIR/bin/activate
-    
-    if [ "$VIRTUAL_ENV" != "" ]; then
+    # shellcheck disable=SC1090
+    source "$VENV_DIR/bin/activate"
+    if [ -n "$VIRTUAL_ENV" ]; then
         print_success "Virtual environment activated"
     else
         print_warning "Failed to activate. Recreating..."
-        rm -rf $VENV_DIR
-        python3 -m venv $VENV_DIR
-        source $VENV_DIR/bin/activate
+        rm -rf "$VENV_DIR"
+        "$PY" -m venv "$VENV_DIR"
+        # shellcheck disable=SC1090
+        source "$VENV_DIR/bin/activate"
         print_success "Virtual environment recreated"
     fi
 else
     if [ "$FORCE_REINSTALL" = true ] && [ -d "$VENV_DIR" ]; then
         print_status "Force reinstall: Removing existing venv..."
-        rm -rf $VENV_DIR
+        rm -rf "$VENV_DIR"
     fi
-    
-    print_status "Creating virtual environment..."
-    python3 -m venv $VENV_DIR
-    source $VENV_DIR/bin/activate
+    print_status "Creating virtual environment with $PY..."
+    "$PY" -m venv "$VENV_DIR"
+    # shellcheck disable=SC1090
+    source "$VENV_DIR/bin/activate"
     print_success "Virtual environment created and activated"
 fi
 
-# Upgrade pip
+# Define venv executables
+VENV_PY="$VENV_DIR/bin/python"
+VENV_PIP="$VENV_DIR/bin/pip"
+
+# Upgrade pip (venv)
 print_status "Upgrading pip..."
-pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet --upgrade pip
 
 # 3. Clone/Update Terminal-Bench repository
 if [ "$CLONE_TBENCH" = true ]; then
     print_header "Terminal-Bench Repository"
-    
     if [ -d "$TBENCH_DIR" ]; then
         if [ "$FORCE_REINSTALL" = true ]; then
             print_status "Force reinstall: Re-cloning terminal-bench..."
-            rm -rf $TBENCH_DIR
-            git clone $TBENCH_REPO $TBENCH_DIR
-            print_success "Terminal-bench cloned fresh"
+            rm -rf "$TBENCH_DIR"
+            git clone "$TBENCH_REPO" "$TBENCH_DIR"
+            print_success "terminal-bench cloned fresh"
         else
-            print_status "Terminal-bench exists. Checking for updates..."
-            cd $TBENCH_DIR
-            
+            print_status "terminal-bench exists. Checking for updates..."
+            pushd "$TBENCH_DIR" >/dev/null
             if [ -d ".git" ]; then
-                git fetch origin -q
-                LOCAL=$(git rev-parse @)
+                git fetch origin -q || true
+                LOCAL=$(git rev-parse @ 2>/dev/null || echo "")
                 REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
-                
-                if [ "$LOCAL" != "$REMOTE" ] && [ "$REMOTE" != "" ]; then
+                if [ -n "$LOCAL" ] && [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
                     print_warning "Updates available for terminal-bench"
-                    read -p "Update to latest version? (y/n) " -n 1 -r
+                    read -p "Update to latest version? (y/n) " -r
                     echo
                     if [[ $REPLY =~ ^[Yy]$ ]]; then
-                        git pull origin main
+                        git pull --ff-only origin main || git pull origin main
                         print_success "Updated to latest version"
                     fi
                 else
-                    current_commit=$(git rev-parse --short HEAD)
-                    print_success "Terminal-bench is up to date (commit: $current_commit)"
+                    current_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+                    print_success "terminal-bench is up to date (commit: $current_commit)"
                 fi
             fi
-            cd ..
+            popd >/dev/null
         fi
     else
         print_status "Cloning terminal-bench repository..."
-        git clone $TBENCH_REPO $TBENCH_DIR
-        print_success "Terminal-bench cloned"
+        git clone "$TBENCH_REPO" "$TBENCH_DIR"
+        print_success "terminal-bench cloned"
     fi
 fi
 
 # 4. Install Terminal-Bench with fixes for CLI issues
 print_header "Installing Terminal-Bench"
 
-# Clean install to avoid conflicts
 if [ "$FORCE_REINSTALL" = true ]; then
-    print_status "Uninstalling existing terminal-bench..."
-    pip uninstall -y terminal-bench 2>/dev/null || true
-    pip cache purge 2>/dev/null || true
+    print_status "Uninstalling existing terminal-bench (if any)..."
+    "$VENV_PIP" uninstall -y terminal-bench 2>/dev/null || true
+    "$VENV_PIP" cache purge 2>/dev/null || true
 fi
 
-# Install terminal-bench
 print_status "Installing terminal-bench package..."
-if [ -d "$TBENCH_DIR" ] && [ -f "$TBENCH_DIR/setup.py" -o -f "$TBENCH_DIR/pyproject.toml" ]; then
-    pip install -e $TBENCH_DIR/
+if [ -d "$TBENCH_DIR" ] && { [ -f "$TBENCH_DIR/setup.py" ] || [ -f "$TBENCH_DIR/pyproject.toml" ]; }; then
+    "$VENV_PIP" install -e "$TBENCH_DIR"/
     print_success "terminal-bench installed from local repository"
 else
-    pip install --upgrade terminal-bench
+    "$VENV_PIP" install --upgrade terminal-bench
     print_success "terminal-bench package installed from PyPI"
 fi
 
 # 5. Fix Terminal-Bench CLI timeout issues
 if [ "$FIX_TB_CLI" = true ]; then
     print_header "Fixing Terminal-Bench CLI"
-    
-    # Create wrapper scripts to handle tb CLI timeout
     print_status "Creating Terminal-Bench wrapper scripts..."
-    
-    # Create a Python wrapper that handles timeouts gracefully
-    cat > $VENV_DIR/bin/tb-safe << 'EOF'
-#!/usr/bin/env python3
-"""Safe wrapper for Terminal-Bench CLI that handles timeouts"""
-import sys
-import os
-import subprocess
-import signal
-from pathlib import Path
 
-def run_tb_with_timeout(args, timeout=10):
-    """Run tb command with timeout handling"""
+    # tb-safe: Python wrapper that handles quick commands with a short timeout
+    cat > "$VENV_DIR/bin/tb-safe" << 'EOF'
+#!/usr/bin/env python3
+"""Safe wrapper for Terminal-Bench CLI that handles timeouts gracefully."""
+import sys, subprocess
+
+def run(args, timeout=10):
     try:
-        # For --version and --help, use short timeout
         if '--version' in args or '--help' in args:
-            result = subprocess.run(
-                ['python', '-m', 'terminal_bench'] + args[1:],
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            print(result.stdout)
-            if result.stderr:
-                print(result.stderr, file=sys.stderr)
-            return result.returncode
+            r = subprocess.run(['python', '-m', 'terminal_bench'] + args[1:],
+                               capture_output=True, text=True, timeout=timeout)
+            if r.stdout: print(r.stdout, end="")
+            if r.stderr: print(r.stderr, file=sys.stderr, end="")
+            return r.returncode
         else:
-            # For actual runs, don't use timeout
-            result = subprocess.run(
-                ['python', '-m', 'terminal_bench'] + args[1:]
-            )
-            return result.returncode
+            return subprocess.run(['python', '-m', 'terminal_bench'] + args[1:]).returncode
     except subprocess.TimeoutExpired:
-        print("Terminal-Bench is initializing (downloading datasets on first run).")
-        print("This is normal. For actual runs, please wait or use 'python -m terminal_bench'")
+        print("Terminal-Bench is initializing (first-run dataset/setup). Try again, or use 'python -m terminal_bench'.")
         return 0
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
-        return 1
+        print("\nInterrupted by user"); return 1
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        print(f"Error: {e}", file=sys.stderr); return 1
 
 if __name__ == "__main__":
-    sys.exit(run_tb_with_timeout(sys.argv))
+    sys.exit(run(sys.argv))
 EOF
-    chmod +x $VENV_DIR/bin/tb-safe
+    chmod +x "$VENV_DIR/bin/tb-safe"
     print_success "Created tb-safe wrapper"
-    
-    # Create direct Python module runner
-    cat > $VENV_DIR/bin/tb-direct << 'EOF'
+
+    # tb-direct: direct module runner
+    cat > "$VENV_DIR/bin/tb-direct" << 'EOF'
 #!/bin/bash
 # Direct Terminal-Bench runner using Python module
 exec python -m terminal_bench "$@"
 EOF
-    chmod +x $VENV_DIR/bin/tb-direct
+    chmod +x "$VENV_DIR/bin/tb-direct"
     print_success "Created tb-direct wrapper"
-    
-    # Test Terminal-Bench import
+
+    # Test Terminal-Bench import using venv Python
     print_status "Testing Terminal-Bench Python module..."
-    if python -c "import terminal_bench; print('✓ Module imports successfully')" 2>/dev/null; then
+    if "$VENV_PY" -c "import terminal_bench; print('✓ Module imports successfully')" >/dev/null 2>&1; then
         print_success "Terminal-Bench Python module works"
     else
         print_error "Terminal-Bench module import failed"
     fi
-    
-    # Try to initialize Terminal-Bench (may download datasets)
-    print_status "Initializing Terminal-Bench (this may download datasets)..."
-    timeout 30 python -c "
+
+    # Try to initialize Terminal-Bench (non-fatal)
+    print_status "Initializing Terminal-Bench (may download datasets on first run)..."
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 30 "$VENV_PY" - << 'PYINIT' 2>/dev/null || true
 try:
     import terminal_bench
     print('✓ Terminal-Bench initialized')
 except Exception as e:
     print(f'⚠ Partial initialization: {e}')
-" 2>/dev/null || {
-    print_warning "Initialization timed out (datasets may still be downloading)"
-    print_status "This is normal on first run. The CLI will work when you run actual tasks."
-}
+PYINIT
+    else
+        "$VENV_PY" - << 'PYINIT' 2>/dev/null || true
+try:
+    import terminal_bench
+    print('✓ Terminal-Bench initialized')
+except Exception as e:
+    print(f'⚠ Partial initialization: {e}')
+PYINIT
+    fi
 fi
 
 # 6. Install additional requirements
@@ -340,11 +296,11 @@ print_header "Installing Dependencies"
 
 if [ -f "requirements.txt" ]; then
     print_status "Installing requirements.txt..."
-    pip install -q -r requirements.txt
+    "$VENV_PIP" install -q -r requirements.txt
     print_success "Requirements installed"
 else
     print_status "Installing common dependencies..."
-    pip install requests python-dotenv pandas tqdm jsonlines numpy openai aiohttp pyyaml
+    "$VENV_PIP" install requests python-dotenv pandas tqdm jsonlines numpy openai aiohttp pyyaml
     print_success "Common dependencies installed"
 fi
 
@@ -370,7 +326,7 @@ fi
 # 8. Create helper scripts
 print_header "Creating Helper Scripts"
 
-# Create diagnostic script
+# diagnostic.py
 cat > diagnostic.py << 'EOF'
 #!/usr/bin/env python3
 """Quick diagnostic for Terminal-Bench + Grok setup"""
@@ -386,7 +342,7 @@ EOF
 chmod +x diagnostic.py
 print_success "Created diagnostic.py"
 
-# Create quick test script
+# quick_test.py
 cat > quick_test.py << 'EOF'
 #!/usr/bin/env python3
 """Quick test of Grok connection"""
@@ -408,33 +364,37 @@ print_success "Created quick_test.py"
 # 9. Test connections (if not skipped)
 if [ "$SKIP_TESTS" = false ]; then
     print_header "Testing Connections"
-    
+
     # Test Grok API if .env is configured
     if grep -q "your_actual_key_here" .env 2>/dev/null; then
         print_warning "Skipping API test - .env not configured yet"
     else
         print_status "Testing Grok API..."
-        if python quick_test.py 2>/dev/null; then
+        if "$VENV_PY" quick_test.py 2>/dev/null; then
             print_success "Grok API working"
         else
             print_warning "Grok API test failed - check your XAI_API_KEY"
         fi
     fi
-    
+
     # Test Docker
     print_status "Testing Docker..."
-    if docker run --rm hello-world > /dev/null 2>&1; then
+    if docker run --rm hello-world >/dev/null 2>&1; then
         print_success "Docker working"
     else
         print_warning "Docker test failed"
     fi
-    
+
     # Test Terminal-Bench wrapper
     print_status "Testing Terminal-Bench wrapper..."
-    if timeout 5 $VENV_DIR/bin/tb-safe --version 2>/dev/null; then
-        print_success "Terminal-Bench wrapper working"
+    if command -v timeout >/dev/null 2>&1; then
+        if timeout 5 "$VENV_DIR/bin/tb-safe" --version >/dev/null 2>&1; then
+            print_success "Terminal-Bench wrapper working"
+        else
+            print_warning "Terminal-Bench may still be initializing"
+        fi
     else
-        print_warning "Terminal-Bench may still be initializing"
+        "$VENV_DIR/bin/tb-safe" --version >/dev/null 2>&1 || print_warning "Terminal-Bench may still be initializing"
     fi
 fi
 
@@ -443,9 +403,9 @@ print_header "Setup Complete! 🎉"
 
 echo -e "${GREEN}${BOLD}Environment is ready for Terminal-Bench evaluation${NC}\n"
 
-# Show status summary
+# Status Summary
 echo -e "${BOLD}Status Summary:${NC}"
-echo -e "  ✓ Python ${GREEN}$(python3 --version 2>&1 | cut -d' ' -f2)${NC}"
+echo -e "  ✓ Python ${GREEN}$("$VENV_PY" --version 2>&1 | cut -d' ' -f2)${NC}"
 echo -e "  ✓ Docker ${GREEN}running${NC}"
 echo -e "  ✓ terminal-bench ${GREEN}installed${NC}"
 
@@ -460,16 +420,16 @@ fi
 # Available commands
 echo -e "\n${BOLD}Available Commands:${NC}"
 echo -e "  ${BLUE}source venv/bin/activate${NC}       # Activate environment"
-echo -e "  ${BLUE}python quick_test.py${NC}            # Test Grok API"
-echo -e "  ${BLUE}python diagnostic.py${NC}            # Run full diagnostics"
-echo -e "  ${BLUE}python run.py --test${NC}            # Quick benchmark test"
-echo -e "  ${BLUE}python run.py --help${NC}            # See all options"
+echo -e "  ${BLUE}$VENV_PY quick_test.py${NC}        # Test Grok API"
+echo -e "  ${BLUE}$VENV_PY diagnostic.py${NC}        # Run full diagnostics"
+echo -e "  ${BLUE}$VENV_PY run.py --test${NC}        # Quick benchmark test"
+echo -e "  ${BLUE}$VENV_PY run.py --help${NC}        # See all options"
 
 # Terminal-Bench specific commands
 echo -e "\n${BOLD}Terminal-Bench Commands:${NC}"
-echo -e "  ${BLUE}tb-safe --help${NC}                  # Safe tb wrapper (handles timeouts)"
-echo -e "  ${BLUE}tb-direct --help${NC}                # Direct Python module access"
-echo -e "  ${BLUE}python -m terminal_bench${NC}        # Use module directly"
+echo -e "  ${BLUE}$VENV_DIR/bin/tb-safe --help${NC}  # Safe tb wrapper (handles timeouts)"
+echo -e "  ${BLUE}$VENV_DIR/bin/tb-direct --help${NC}# Direct Python module access"
+echo -e "  ${BLUE}python -m terminal_bench${NC}      # Works while venv is active"
 
 # Next steps
 echo -e "\n${BOLD}Next Steps:${NC}"
@@ -483,20 +443,20 @@ if grep -q "your_actual_key_here" .env 2>/dev/null; then
 fi
 
 echo -e "  ${GREEN}${step_num}. Test your setup:${NC}"
-echo -e "     python diagnostic.py"
+echo -e "     $VENV_PY diagnostic.py"
 ((step_num++))
 
 echo -e "  ${GREEN}${step_num}. Run a quick test:${NC}"
-echo -e "     python run.py --test"
+echo -e "     $VENV_PY run.py --test"
 ((step_num++))
 
 echo -e "  ${GREEN}${step_num}. Run the benchmark:${NC}"
-echo -e "     python run.py --model grok-2-1212 --n-concurrent 4"
+echo -e "     $VENV_PY run.py --model grok-2-1212 --n-concurrent 4"
 
 # Important notes
 echo -e "\n${BOLD}Important Notes:${NC}"
 echo -e "  • Terminal-Bench downloads datasets on first use (can take time)"
-echo -e "  • If 'tb' command times out, use 'python -m terminal_bench' instead"
+echo -e "  • If 'tb' command times out, use 'python -m terminal_bench' or tb-safe/tb-direct"
 echo -e "  • Docker must be running for all benchmarks"
 echo -e "  • Results are saved to results/ directory"
 
