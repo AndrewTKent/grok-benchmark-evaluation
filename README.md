@@ -42,7 +42,7 @@ pip install terminal-bench
 tb --version  # Verify installation
 
 # 6. Download the terminal-bench-core dataset
-tb datasets download --dataset terminal-bench-core==  # Downloads latest version (head)
+tb datasets download --dataset terminal-bench-core==0.1.1  # Downloads latest version (head)
 # For a specific version, e.g., 0.1.1:
 # tb datasets download --dataset terminal-bench-core==0.1.1
 # To overwrite existing dataset: add --overwrite
