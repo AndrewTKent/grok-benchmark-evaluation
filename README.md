@@ -28,7 +28,7 @@ git clone https://github.com/AndrewTKent/grok-benchmark-evaluation.git
 cd grok-benchmark-evaluation
 
 # 2. Run setup script
-./setup.sh
+bash setup.sh
 
 # 3. Create .env file with your API key
 echo "XAI_API_KEY=your_actual_key_here" > .env
