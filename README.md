@@ -162,6 +162,24 @@ python run.py \
 ```
 > In this version the **compare** mode forwards `--n-concurrent` to both runs (no more implicit `n_concurrent=1`).
 
+**Take Home Benchmark**
+```bash
+python run.py \
+  --compare \
+  --dataset terminal-bench-core==0.1.1 \
+  --n-concurrent 4 \
+  --task-id hello-world \
+  --task-id fix-git \
+  --task-id sanitize-git-repo \
+  --task-id git-multibranch \
+  --task-id git-workflow-hack \
+  --task-id heterogeneous-dates \
+  --task-id organization-json-generator \
+  --task-id grid-pattern-transform \
+  --task-id sqlite-db-truncate \
+  --task-id extract-safely
+```
+
 **Full benchmark**
 ```bash
 python run.py --n-concurrent 4 --n-attempts 2
