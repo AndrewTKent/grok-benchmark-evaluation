@@ -3,11 +3,19 @@
 tools/make_plots.py
 
 Generate figures from Enhanced Terminal-Bench per-task metrics.
+Also supports comparing a baseline results.json vs an enhanced enhanced_analysis.json.
 
-Usage:
-    python tools/make_plots.py --run-dir results/tb_<...>_<timestamp>
+Usage (single run, as before):
+    python tools/make_plots.py --run-dir results/tb_grok-4-fast-reasoning_enhanced_20250926_051857
 
-Outputs:
+Usage (comparison):
+    python tools/make_plots.py \
+      --baseline-results results/tb_grok-4-fast-reasoning_20250926_051255/2025-09-26__05-12-59/results.json \
+      --enhanced-analysis results/tb_grok-4-fast-reasoning_enhanced_20250926_051857/enhanced_analysis.json \
+      [--enhanced-run-dir results/tb_grok-4-fast-reasoning_enhanced_20250926_051857] \
+      [--out-dir results/figs_compare]
+
+Outputs (single run):
     <run-dir>/figs/
         success_rate.png
         component_scores.png
@@ -18,9 +26,14 @@ Outputs:
         time_hist.png
         time_hist_log.png
         time_box.png
-        time_box_by_outcome.png        (only if both success/failure exist)
+        time_box_by_outcome.png
         time_fastest_topN.png
         time_slowest_bottomN.png
+
+Outputs (comparison):
+    <out-dir>/comp_success_rate.png
+    <out-dir>/comp_component_scores.png
+    (future comparisons will be added only if both sides have the needed fields)
 
 Notes:
 - Uses matplotlib only, one chart per figure, no explicit colors.
@@ -37,7 +50,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-# ---------- IO / Loading ----------
+# ---------- IO / Loading (single-run helpers) ----------
 
 def load_metrics(run_dir: Path) -> pd.DataFrame:
     """Recursively load per-task enhanced metrics JSON files."""
@@ -71,7 +84,81 @@ def ensure_figs_dir(run_dir: Path) -> Path:
     return figs
 
 
-# ---------- Plots (generic) ----------
+# ---------- IO / Loading (comparison helpers) ----------
+
+def parse_baseline_results_json(path: Path) -> dict:
+    """
+    Parse a baseline results.json to extract success counts and (if present) task durations.
+    Returns dict with keys: succ, fail, total, success_rate, times (list|None)
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Baseline results not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise SystemExit(f"Failed to parse baseline results: {e}")
+
+    succ = 0
+    total = 0
+    times = []
+
+    # Common schema from tb_runner_base aggregation is a run-level "tasks" list.
+    tasks = data.get("tasks")
+    if isinstance(tasks, list):
+        for t in tasks:
+            status = str(t.get("status", "")).lower()
+            if status:
+                total += 1
+                if status == "success":
+                    succ += 1
+            # Try to capture any timing if exposed
+            # (not guaranteed; many results.json don't include per-task times)
+            tt = t.get("time_taken") or t.get("duration") or None
+            if isinstance(tt, (int, float)):
+                times.append(float(tt))
+
+    # Fallback: try a nested field (some schemas differ)
+    if total == 0 and isinstance(data, dict):
+        # Look for trial-like objects
+        for k, v in data.items():
+            if isinstance(v, dict) and "status" in v:
+                total += 1
+                succ += 1 if str(v["status"]).lower() == "success" else 0
+
+    fail = max(0, total - succ)
+    rate = (succ / total) if total else 0.0
+    return {"succ": succ, "fail": fail, "total": total, "success_rate": rate, "times": times or None}
+
+
+def parse_enhanced_analysis_json(path: Path) -> dict:
+    """
+    Parse enhanced_analysis.json to extract summary metrics.
+    Returns dict with keys: success_rate, composite, efficiency, recovery, safety
+    Missing keys are set to None.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Enhanced analysis not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise SystemExit(f"Failed to parse enhanced analysis: {e}")
+
+    summary = data.get("analysis", {}).get("summary", {}) if "analysis" in data else data.get("summary", {})
+    return {
+        "success_rate": summary.get("success_rate"),
+        "composite": summary.get("avg_composite_score"),
+        "efficiency": summary.get("avg_efficiency"),
+        "recovery": summary.get("avg_recovery"),
+        "safety": summary.get("avg_safety"),
+    }
+
+
+def ensure_out_dir(out_dir: Path) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+# ---------- Plots (single-run) ----------
 
 def plot_success_rate(df: pd.DataFrame, figs: Path):
     """Simple success vs failure bar."""
@@ -178,7 +265,7 @@ def plot_steps_vs_time(df: pd.DataFrame, figs: Path):
     plt.close()
 
 
-# ---------- Scalable time visualizations (replace time_per_task) ----------
+# ---------- Scalable time visualizations (single-run) ----------
 
 def plot_time_top_bottom(df: pd.DataFrame, figs: Path, top_n: int = 15, bottom_n: int = 15):
     """Horizontal bars for the fastest and slowest tasks (top/bottom N)."""
@@ -296,16 +383,121 @@ def plot_time_box(df: pd.DataFrame, figs: Path):
             plt.close()
 
 
+# ---------- Plots (comparison) ----------
+
+def plot_comp_success_rate(baseline: dict, enhanced: dict, out_dir: Path):
+    """
+    Two bars: baseline vs enhanced success rate.
+    baseline: dict from parse_baseline_results_json
+    enhanced: dict from parse_enhanced_analysis_json
+    """
+    br = baseline.get("success_rate")
+    er = enhanced.get("success_rate")
+    if br is None and er is None:
+        return
+    labels, vals = [], []
+    if br is not None:
+        labels.append("Baseline")
+        vals.append(br)
+    if er is not None:
+        labels.append("Enhanced")
+        vals.append(er)
+    if not vals:
+        return
+    plt.figure()
+    plt.bar(labels, vals)
+    plt.ylim(0, 1)
+    title_bits = []
+    if baseline.get("total"):
+        title_bits.append(f"Baseline n={baseline['total']}")
+    plt.ylabel("Success rate")
+    plt.title("; ".join(title_bits) if title_bits else "Success rate comparison")
+    plt.tight_layout()
+    plt.savefig(out_dir / "comp_success_rate.png", dpi=180)
+    plt.close()
+
+
+def plot_comp_component_scores(enhanced: dict, out_dir: Path):
+    """
+    Enhanced components only (baseline has no components natively).
+    Bars: composite, efficiency, recovery, safety for the enhanced run.
+    """
+    keys = ["composite", "efficiency", "recovery", "safety"]
+    present = {k: enhanced.get(k) for k in keys if enhanced.get(k) is not None}
+    if not present:
+        return
+    names = list(present.keys())
+    vals = [present[k] for k in names]
+    plt.figure()
+    plt.bar(names, vals)
+    plt.ylim(0, 1)
+    plt.ylabel("Average score")
+    plt.title("Enhanced component scores")
+    plt.tight_layout()
+    plt.savefig(out_dir / "comp_component_scores.png", dpi=180)
+    plt.close()
+
+
 # ---------- Main ----------
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate figures from Enhanced TB metrics.")
-    ap.add_argument(
-        "--run-dir",
-        required=True,
-        help="Path to a specific run directory (e.g., results/tb_..._YYYYMMDD_HHMMSS)",
-    )
+    ap = argparse.ArgumentParser(description="Generate figures from Enhanced TB metrics or compare baseline vs enhanced.")
+    # Single-run mode (original)
+    ap.add_argument("--run-dir", help="Path to a run directory (e.g., results/tb_..._YYYYMMDD_HHMMSS)")
+    # Comparison mode (new)
+    ap.add_argument("--baseline-results", help="Path to baseline results.json")
+    ap.add_argument("--enhanced-analysis", help="Path to enhanced_analysis.json")
+    ap.add_argument("--enhanced-run-dir", help="(Optional) Enhanced run dir to load per-task metrics in addition to analysis.json")
+    ap.add_argument("--out-dir", help="(Optional) Output dir for comparison figs (default: <enhanced-run-dir>/figs_compare or sibling of enhanced_analysis.json)")
+
     args = ap.parse_args()
+
+    # --- Comparison mode if both files provided ---
+    if args.baseline_results and args.enhanced_analysis:
+        baseline_path = Path(args.baseline_results).resolve()
+        enhanced_path = Path(args.enhanced_analysis).resolve()
+
+        baseline = parse_baseline_results_json(baseline_path)
+        enhanced = parse_enhanced_analysis_json(enhanced_path)
+
+        # Decide output dir
+        if args.out_dir:
+            out_dir = ensure_out_dir(Path(args.out_dir).resolve())
+        else:
+            if args.enhanced_run_dir:
+                out_dir = ensure_out_dir(Path(args.enhanced_run_dir).resolve() / "figs_compare")
+            else:
+                out_dir = ensure_out_dir(enhanced_path.parent / "figs_compare")
+
+        # Core comparisons
+        plot_comp_success_rate(baseline, enhanced, out_dir)
+        plot_comp_component_scores(enhanced, out_dir)
+
+        # Optional: if an enhanced run-dir is provided, also emit the single-run figs for that enhanced dir
+        if args.enhanced_run_dir:
+            run_dir = Path(args.enhanced_run_dir).resolve()
+            df = load_metrics(run_dir)
+            figs = ensure_figs_dir(run_dir)
+            if "time_taken" in df.columns:
+                df["time_taken"] = pd.to_numeric(df["time_taken"], errors="coerce")
+            if "steps_taken" in df.columns:
+                df["steps_taken"] = pd.to_numeric(df["steps_taken"], errors="coerce")
+            plot_success_rate(df, figs)
+            plot_component_bars(df, figs)
+            plot_failure_patterns(df, figs)
+            plot_loops_hist(df, figs)
+            plot_steps_vs_time(df, figs)
+            plot_time_top_bottom(df, figs, top_n=15, bottom_n=15)
+            plot_time_ecdf(df, figs)
+            plot_time_hist_log(df, figs)
+            plot_time_box(df, figs)
+
+        print(f"Comparison figures written to: {out_dir}")
+        return
+
+    # --- Single-run mode (original behavior) ---
+    if not args.run_dir:
+        raise SystemExit("Provide either --run-dir (single-run) OR both --baseline-results and --enhanced-analysis (comparison).")
 
     run_dir = Path(args.run_dir).resolve()
     if not run_dir.exists():
@@ -327,7 +519,7 @@ def main():
     plot_loops_hist(df, figs)
     plot_steps_vs_time(df, figs)
 
-    # Scalable time visualizations (replace time_per_task)
+    # Scalable time visualizations
     plot_time_top_bottom(df, figs, top_n=15, bottom_n=15)
     plot_time_ecdf(df, figs)
     plot_time_hist_log(df, figs)
