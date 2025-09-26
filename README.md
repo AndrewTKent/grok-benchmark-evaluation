@@ -4,7 +4,7 @@ Evaluate Grok on the [Terminal‑Bench](https://github.com/laude-institute/termi
 
 ---
 
-## ✨ What’s new in this version
+## Some Features of the Repo
 
 - **Real Terminal‑Bench integration** – Uses `tb run` with tmux sessions and proper `BaseAgent` adapters.
 - **Two agents**  
@@ -19,7 +19,7 @@ Evaluate Grok on the [Terminal‑Bench](https://github.com/laude-institute/termi
 
 ---
 
-## 📦 Repository structure
+## Repository structure
 
 ```
 .
@@ -53,7 +53,7 @@ Evaluate Grok on the [Terminal‑Bench](https://github.com/laude-institute/termi
 
 ---
 
-## ✅ Prerequisites
+## Prerequisites
 
 - Python **3.12+**
 - **Docker** (for Terminal‑Bench tasks)
@@ -72,7 +72,7 @@ GROK_MAX_RETRIES=3
 
 ---
 
-## 🚀 Quick start
+## Quick start
 
 ```bash
 # 1) Clone
@@ -97,7 +97,7 @@ python run.py --test
 
 ---
 
-## 🧭 CLI overview
+## CLI overview
 
 The entrypoint `run.py` simply dispatches to `src/cli/main.py`.
 
@@ -192,7 +192,7 @@ python run.py --debug --test
 
 ---
 
-## 📡 What runs under the hood
+## What runs under the hood
 
 - **Standard path** → `StandardTerminalBenchRunner` + `GrokTerminalAgent`
 - **Enhanced path** → `EnhancedTerminalBenchRunner` + `EnhancedGrokTerminalAgent`
@@ -257,7 +257,7 @@ python -c "from src.clients.grok_client import GrokClient; GrokClient().test_con
 
 ---
 
-## ⚙️ Configuration notes
+## Configuration notes
 
 - Set `XAI_API_KEY` (or `GROK_API_KEY`) in shell or `.env`.
 - Control model via `--model` or `GROK_MODEL` env.
@@ -266,16 +266,8 @@ python -c "from src.clients.grok_client import GrokClient; GrokClient().test_con
 
 ---
 
-## 📝 License
+## License
 
 MIT — see `LICENSE`.
 
 ---
-
-## 🤝 Contributing
-
-Issues and PRs welcome. Please run:
-```bash
-python run.py --diagnostic
-python run.py --test
-```
