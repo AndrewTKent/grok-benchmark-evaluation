@@ -153,7 +153,7 @@ python run.py \
   --task-id hello-world --task-id fix-git
 ```
 
-**Comparison (baseline vs enhanced) — now truly parallel**
+**Comparison (baseline vs enhanced)**
 ```bash
 python run.py \
   --compare \
