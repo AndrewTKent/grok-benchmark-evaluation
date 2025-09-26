@@ -30,25 +30,17 @@ cd grok-benchmark-evaluation
 # 2. Run setup script
 bash setup.sh
 
-# 3. Create .env file with your API key
-echo "XAI_API_KEY=your_actual_key_here" > .env
-echo "GROK_MODEL=grok-2-1212" >> .env  # or grok-beta
-
-# 4. Activate virtual environment
+# 2. Activate virtual environment
 source venv/bin/activate
 
-# 5. Install Terminal-Bench
-pip install terminal-bench
-tb --version  # Verify installation
-
-# 6. Download the terminal-bench-core dataset
+# 3. Download the terminal-bench-core dataset
 tb datasets download --dataset terminal-bench-core==0.1.1  # Downloads latest version (head)
 # For a specific version, e.g., 0.1.1:
 # tb datasets download --dataset terminal-bench-core==0.1.1
 # To overwrite existing dataset: add --overwrite
 # To specify output directory: add --output-dir /path/to/dir
 
-# 7. Run diagnostics to verify setup
+# 4. Run diagnostics to verify setup
 python run.py --test
 ```
 
