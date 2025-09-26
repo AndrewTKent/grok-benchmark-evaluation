@@ -1,5 +1,6 @@
-# src/terminal_agent.py
-"""Terminal-Bench Agent implementation for Grok — TB-compatible version with progress tracking (fixed)"""
+# src/agents/grok_terminal_agent.py
+"""Terminal-Bench Agent implementation for Grok — TB-compatible version with progress tracking (refactored)."""
+
 import os
 import sys
 import json
@@ -8,59 +9,18 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 
-# Add parent dir to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Ensure package root in sys.path
+sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from terminal_bench.agents.base_agent import BaseAgent, AgentResult
 from terminal_bench.agents.failure_mode import FailureMode
 from terminal_bench.terminal.tmux_session import TmuxSession
 
-from src.grok_client import GrokClient
+from src.clients.grok_client import GrokClient
+from src.utils.progress import ProgressReporter, ProgressEvent
+from src.utils.tmux_compat import safe_read_pane, send_with_enter
 
 PROGRESS_PREFIX = "TB_PROGRESS"  # Visible in pane/logs, easy to grep
-
-
-# ---- Progress helpers ----
-
-@dataclass
-class ProgressEvent:
-    ts: float
-    phase: str            # e.g., "init", "plan", "act", "verify", "done"
-    msg: str              # short human hint
-    step: Optional[int] = None
-    total_steps: Optional[int] = None
-    extra: Optional[Dict[str, Any]] = None
-
-
-class ProgressReporter:
-    """Writes JSONL progress + accumulates timestamped markers for AgentResult."""
-    def __init__(self, logging_dir: Optional[Path] = None):
-        self.logging_dir = logging_dir
-        self.jsonl: Optional[Path] = None
-        if logging_dir:
-            logging_dir.mkdir(parents=True, exist_ok=True)
-            self.jsonl = logging_dir / "progress.jsonl"
-        self._markers: List[Tuple[float, str]] = []
-
-    def record(self, event: ProgressEvent) -> Tuple[float, str]:
-        data = asdict(event)
-        # 1) persist to file
-        if self.jsonl:
-            with self.jsonl.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(data, ensure_ascii=False) + "\n")
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except OSError:
-                    pass
-        # 2) return a compact marker label for AgentResult
-        label = f"{event.phase}:{event.msg}"
-        self._markers.append((event.ts, label))
-        return event.ts, label
-
-    @property
-    def markers(self) -> List[Tuple[float, str]]:
-        return list(self._markers)
 
 
 class GrokTerminalAgent(BaseAgent):
@@ -142,7 +102,7 @@ class GrokTerminalAgent(BaseAgent):
         # Minimal perception→action loop with progress
         max_steps = 20
         for step in range(1, max_steps + 1):
-            observation = self._safe_read_pane(session)
+            observation = safe_read_pane(session)
             cmd = self.get_action(observation)
 
             ts, label = progress.record(ProgressEvent(
@@ -156,10 +116,10 @@ class GrokTerminalAgent(BaseAgent):
                 pass
 
             # Send the command (always press Enter in a TB-compatible way)
-            self._send_with_enter(session, cmd)
+            send_with_enter(session, cmd)
             time.sleep(0.2)
 
-            out = self._safe_read_pane(session)
+            out = safe_read_pane(session)
             if "TASK_COMPLETE" in out:
                 ts, label = progress.record(ProgressEvent(
                     ts=now_ts(), phase="done", msg="task_complete", step=step, total_steps=step
@@ -247,54 +207,53 @@ class GrokTerminalAgent(BaseAgent):
         """Build the system prompt based on context."""
         base_prompt = """You are a bash shell automation agent. Respond with ONLY the next command.
 
-    CRITICAL RULES:
-    1. ONE bash command per response - no explanations, no markdown
-    2. If previous command failed, try a DIFFERENT approach
-    3. After 2 failures, install missing tools: apt-get update && apt-get install -y [package]
+CRITICAL RULES:
+1. ONE bash command per response - no explanations, no markdown
+2. If previous command failed, try a DIFFERENT approach
+3. After 2 failures, install missing tools: apt-get update && apt-get install -y [package]
 
-    ENVIRONMENT STATE:
-    - You are ALWAYS in bash shell (never Python REPL)
-    - If you see >>> prompt, immediately respond: exit()
-    - If you see > prompt (heredoc), complete it or use Ctrl+C
+ENVIRONMENT STATE:
+- You are ALWAYS in bash shell (never Python REPL)
+- If you see >>> prompt, immediately respond: exit()
+- If you see > prompt (heredoc), complete it or use Ctrl+C
 
-    PYTHON CODE EXECUTION:
-    NEVER type Python statements directly. Instead use:
-    - python3 -c "code_here"
-    - echo 'code' > script.py && python3 script.py
-    - For multi-line: cat > script.py << 'EOF' [then on next lines add the content]
+PYTHON CODE EXECUTION:
+NEVER type Python statements directly. Instead use:
+- python3 -c "code_here"
+- echo 'code' > script.py && python3 script.py
+- For multi-line: cat > script.py << 'EOF' [then on next lines add the content]
 
-    COMMON MISTAKES TO AVOID:
-    ✗ import json → ✓ python3 -c "import json; ..."
-    ✗ Repeating failed commands → ✓ Try different approach
-    ✗ pip3 install torch (slow) → ✓ echo "Skipping large install" or use --no-deps
+COMMON MISTAKES TO AVOID:
+✗ import json → ✓ python3 -c "import json; ..."
+✗ Repeating failed commands → ✓ Try different approach
+✗ pip3 install torch (slow) → ✓ echo "Skipping large install" or use --no-deps
 
-    MISSING COMMANDS - Install these packages:
-    - sqlite3: apt-get install -y sqlite3
-    - file: apt-get install -y file  
-    - pip/pip3: apt-get install -y python3-pip
-    - john: Already at /app/john/run/john
-    - perl: apt-get install -y perl
+MISSING COMMANDS - Install these packages:
+- sqlite3: apt-get install -y sqlite3
+- file: apt-get install -y file
+- pip/pip3: apt-get install -y python3-pip
+- john: Already at /app/john/run/john
+- perl: apt-get install -y perl
 
-    HEREDOC SYNTAX:
-    cat > filename << 'EOF'
-    [content will follow in subsequent responses]
-    EOF
+HEREDOC SYNTAX:
+cat > filename << 'EOF'
+[content will follow in subsequent responses]
+EOF
 
-    TASK COMPLETION:
-    - Success: echo "TASK_COMPLETE"
-    - Failure: echo "TASK_FAILED: reason"
+TASK COMPLETION:
+- Success: echo "TASK_COMPLETE"
+- Failure: echo "TASK_FAILED: reason"
 
-    ANTI-PATTERNS (NEVER DO):
-    1. Typing Python code in bash
-    2. Repeating the same failed command
-    3. Using pip for large packages without timeout consideration
-    4. Forgetting to exit() from Python REPL"""
+ANTI-PATTERNS (NEVER DO):
+1. Typing Python code in bash
+2. Repeating the same failed command
+3. Using pip for large packages without timeout consideration
+4. Forgetting to exit() from Python REPL"""
 
         if self.current_task_instruction:
             base_prompt += f"\n\nTASK: {self.current_task_instruction}\n"
-            
+
         base_prompt += "\nRespond with ONLY the command. Nothing else."
-        
         return base_prompt
 
     def _build_messages(self, system_prompt: str, observation: str) -> List[Dict[str, str]]:
@@ -361,7 +320,7 @@ What is the next command to execute? Remember: respond with ONLY the command."""
                     elif missing == "sqlite3":
                         return "apt-get update && apt-get install -y sqlite3"
                 return "echo 'Avoiding command loop - trying alternative approach'"
-        
+
         # Track failed commands
         if "command not found" in observation or "No such file" in observation:
             if not hasattr(self, '_last_failed_commands'):
@@ -369,7 +328,7 @@ What is the next command to execute? Remember: respond with ONLY the command."""
             self._last_failed_commands.append(command)
             if len(self._last_failed_commands) > 5:
                 self._last_failed_commands.pop(0)
-        
+
         return command
 
     def _extract_missing_command(self, observation: str) -> Optional[str]:
@@ -398,16 +357,6 @@ What is the next command to execute? Remember: respond with ONLY the command."""
 
     # ------------------------- TB compatibility helpers -------------------------
 
-    def _safe_read_pane(self, session: TmuxSession) -> str:
-        """Try various read methods for different TB versions."""
-        try:
-            return session.read_pane()
-        except Exception:
-            try:
-                return session.capture_pane()
-            except Exception:
-                return ""
-
     @staticmethod
     def _single_quote(s: str) -> str:
         """Safely single-quote a string for POSIX shells."""
@@ -418,20 +367,4 @@ What is the next command to execute? Remember: respond with ONLY the command."""
         payload = json.dumps(obj, ensure_ascii=False)
         line = f"{PROGRESS_PREFIX} {payload}"
         cmd = f"printf %s\\n {self._single_quote(line)}"
-        self._send_with_enter(session, cmd)
-
-    # ---- unified “press Enter” sending (handles TB versions without enter= kwarg) ----
-    def _send_with_enter(self, session: TmuxSession, text: str) -> None:
-        """Send text and then an Enter in a way compatible with multiple TB versions."""
-        try:
-            # Most tmux bindings will accept literal newline appended
-            session.send_keys((text or "") + "\n")
-        except TypeError:
-            # Fallback: send text, then send a standalone newline
-            try:
-                session.send_keys(text or "")
-                session.send_keys("\n")
-            except Exception:
-                # Last resort: try carriage return
-                session.send_keys(text or "")
-                session.send_keys("\r")
+        send_with_enter(session, cmd)

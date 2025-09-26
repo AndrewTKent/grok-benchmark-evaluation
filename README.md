@@ -87,8 +87,8 @@ python run.py \
 # Run one or more specific tasks
 python run.py \
   --dataset terminal-bench-core==0.1.1 \
-  --n-concurrent 2 \
-  --n-attempts 1 \
+  --n-concurrent 10 \
+  --n-attempts 4 \
   --timeout 240 \
   --task-id hello-world \
   --task-id fix-git \
