@@ -31,7 +31,6 @@ def main() -> int:
 
     args = p.parse_args()
 
-    # choose runner
     if args.enhanced or args.compare:
         runner = EnhancedTerminalBenchRunner(
             model=args.model,
@@ -46,7 +45,6 @@ def main() -> int:
         import os
         os.environ["GROK_DEBUG"] = "true"
 
-    # modes
     if args.diagnostic:
         ok = runner.run_diagnostic_test()
         return 0 if all(ok["checks"].values()) else 1
@@ -58,12 +56,14 @@ def main() -> int:
         return runner.run_quick_test()
 
     if args.compare:
-        # one-call comparison (standard vs enhanced)
-        comp = runner.run_comparative_analysis(dataset=args.dataset, task_ids=args.task_ids)
+        comp = runner.run_comparative_analysis(
+            dataset=args.dataset,
+            task_ids=args.task_ids,
+            n_concurrent=args.n_concurrent,   # ← forward concurrency
+        )
         print("\nComparison summary:", comp)
         return 0
 
-    # default: run once (standard or enhanced depending on flag)
     results = runner.run_with_tb_cli(
         dataset=args.dataset,
         task_ids=args.task_ids,

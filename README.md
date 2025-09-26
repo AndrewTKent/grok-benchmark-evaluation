@@ -1,286 +1,264 @@
-# Grok Terminal-Bench Evaluation
+# Grok Terminal‑Bench Evaluation
 
-This repository evaluates Grok on the Terminal-Bench benchmark (from https://github.com/laude-institute/terminal-bench), focusing on AI agent performance in real terminal environments.
+Evaluate Grok on the [Terminal‑Bench](https://github.com/laude-institute/terminal-bench) benchmark with a production‑ready runner, two agent variants (standard & enhanced), live progress tailing, and post‑hoc analytics.
 
-## 🔧 Key Fixes Applied
+---
 
-1. **Proper Terminal-Bench Integration**: The agent now correctly interfaces with Terminal-Bench's execution environment instead of using mock responses.
+## ✨ What’s new in this version
 
-2. **Simplified Agent Architecture**: Removed unnecessary `perform_task()` method - Terminal-Bench handles the execution loop.
+- **Real Terminal‑Bench integration** – Uses `tb run` with tmux sessions and proper `BaseAgent` adapters.
+- **Two agents**  
+  - `GrokTerminalAgent` (baseline, deterministic)  
+  - `EnhancedGrokTerminalAgent` (loop detection, safety checks, optional failure injection, composite scoring)
+- **Enhanced analysis** – Aggregates per‑task metrics and writes an **enhanced analysis report** (`enhanced_analysis.json` + `.txt`).
+- **Live progress** – A background tailer prints `progress.jsonl` and `commands.txt` lines per trial for real‑time visibility.
+- **Parallel execution fixed** – `--n-concurrent` is now honored across modes, including **compare** mode. The runner no longer hard‑codes `n_concurrent=1` during comparisons.
+- **Robust tmux compatibility** – Unified “send + Enter” and pane capture helpers work across Terminal‑Bench versions.
+- **Clean command extraction & validation** – Heuristics to strip code fences, avoid explanations, and repair common failure patterns.
+- **Resilient Grok client** – Timeouts, retries, exponential backoff, and rate‑limit handling.
 
-3. **Enhanced Error Handling**: Added validation, command cleaning, and safety checks.
+---
 
-4. **Comprehensive Diagnostics**: New diagnostic tool to verify setup before running benchmarks.
-
-5. **Better Command Extraction**: Improved parsing of Grok's responses to extract clean shell commands.
-
-## 📋 Prerequisites
-
-- Python 3.12+
-- Docker (required for Terminal-Bench)
-- Valid Grok API key from console.x.ai
-
-## 🚀 Quick Setup
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/AndrewTKent/grok-benchmark-evaluation.git
-cd grok-benchmark-evaluation
-
-# 2. Run setup script
-bash setup.sh
-
-# 2. Activate virtual environment
-source venv/bin/activate
-
-# 3. Download the terminal-bench-core dataset
-tb datasets download --dataset terminal-bench-core==0.1.1  # Downloads latest version (head)
-# For a specific version, e.g., 0.1.1:
-# tb datasets download --dataset terminal-bench-core==0.1.1
-# To overwrite existing dataset: add --overwrite
-# To specify output directory: add --output-dir /path/to/dir
-
-# 4. Run diagnostics to verify setup
-python run.py --test
-```
-
-## 🧪 Testing & Running
-
-### Quick Test
-```bash
-# Test with simple task and diagnostics
-python run.py --test
-```
-
-### List Available Tasks
-```bash
-# See what tasks are available
-python run.py --list-tasks
-```
-
-### Run Specific Tasks
-```bash
-# Run one or more specific tasks
-python run.py --task-id "task_name_1" --task-id "task_name_2"
-```
-
-### Run Specific Tasks
-```bash
-# Run one or more specific tasks
-python run.py \
-  --dataset terminal-bench-core==0.1.1 \
-  --n-concurrent 2 \
-  --n-attempts 1 \
-  --timeout 240 \
-  --task-id hello-world \
-  --task-id fix-git \
-  --task-id fix-permissions \
-  --task-id sqlite-db-truncate \
-  --task-id csv-to-parquet \
-  --task-id heterogeneous-dates \
-  --task-id pytorch-model-cli.easy \
-  --task-id crack-7z-hash.easy
-```
-
-### Run 4 Easy Tasks
-```bash
-# Run one or more specific tasks
-python run.py \
-  --dataset terminal-bench-core==0.1.1 \
-  --n-concurrent 10 \
-  --n-attempts 4 \
-  --timeout 240 \
-  --task-id hello-world \
-  --task-id fix-git \
-  --task-id fix-permissions \
-  --task-id heterogeneous-dates 
-```
-
-### Run 4 Hard Tasks
-```bash
-# Run one or more specific tasks
-python run.py \
-  --dataset terminal-bench-core==0.1.1 \
-  --n-concurrent 2 \
-  --n-attempts 1 \
-  --timeout 240 \
-  --task-id sqlite-db-truncate \
-  --task-id csv-to-parquet \
-  --task-id pytorch-model-cli.easy \
-  --task-id crack-7z-hash.easy
-```
-
-### Full Benchmark
-```bash
-# Run complete benchmark (may take time and API credits)
-python run.py --n-concurrent 4 --n-attempts 2
-
-# With specific model
-python run.py --model grok-beta --n-concurrent 2
-```
-
-### Debug Mode
-```bash
-# Enable verbose logging
-python run.py --debug --test
-```
-
-## 📁 Project Structure
+## 📦 Repository structure
 
 ```
 .
-├── src/
-│   ├── grok_client.py      # Grok API client with retry logic
-│   ├── terminal_agent.py   # FIXED: Proper Terminal-Bench agent
-│   └── tb_runner.py        # FIXED: Improved benchmark runner
-├── diagnostic.py           # NEW: Comprehensive diagnostic tool
-├── run.py                 # UPDATED: Main runner with test modes
-├── setup.sh               # Automated setup script
-├── requirements.txt       # Python dependencies
-├── .env                   # Your API credentials (create this)
-└── results/              # Benchmark results (auto-created)
+├─ run.py                       # Thin CLI entrypoint → src/cli/main.py
+├─ setup.sh                     # Optional environment bootstrap
+├─ requirements.txt
+├─ src/
+│  ├─ cli/
+│  │  └─ main.py               # argparse CLI: list, test, run, compare
+│  ├─ clients/
+│  │  └─ grok_client.py        # OpenAI‑compatible client with retries/backoff
+│  ├─ agents/
+│  │  ├─ grok_terminal_agent.py    # Baseline TB agent
+│  │  └─ enhanced_agent.py         # Enhanced agent (loop/safety/failure‑inject)
+│  ├─ runners/
+│  │  ├─ tb_runner_base.py     # Shared setup, env prep, result parsing, live tailer
+│  │  ├─ standard_runner.py    # Baseline runner
+│  │  └─ enhanced_runner.py    # Enhanced/Compare runners; honors --n-concurrent
+│  ├─ analysis/
+│  │  └─ analyzer.py           # EnhancedAnalyzer → JSON + TXT summaries
+│  ├─ metrics/                 # Scoring & instrumentation used by enhanced agent
+│  │  ├─ safety_checker.py
+│  │  ├─ loop_detector.py
+│  │  ├─ failure_injector.py
+│  │  └─ scoring.py
+│  └─ utils/
+│     ├─ tmux_compat.py        # send_with_enter(), safe_read_pane()
+│     └─ progress.py           # ProgressEvent/Reporter helpers
+└─ results/                     # Created at runtime (TB outputs + enhanced metrics)
 ```
 
-## 🔍 Understanding Results
+---
 
-After running benchmarks, check the `results/` directory:
+## ✅ Prerequisites
 
-- `diagnostic_*.json` - System check results
-- `quick_test_*.json` - Quick test outcomes
-- `benchmark_summary_*.json` - Full benchmark results
-- `tb_grok_*/` - Terminal-Bench raw outputs
+- Python **3.12+**
+- **Docker** (for Terminal‑Bench tasks)
+- `terminal-bench` CLI (`pip install terminal-bench`)
+- Grok API key from **console.x.ai** set as one of:
+  - `XAI_API_KEY` (preferred) or `GROK_API_KEY`
+- (Optional) `GROK_MODEL` (defaults to `grok-4-fast-reasoning` in runner; client default `grok-2-1212`).
 
-### Key Metrics
-- **Success Rate**: Percentage of tasks completed successfully
-- **Failure Patterns**: Common reasons for task failures
-- **Execution Time**: Time taken per task
-
-## 🐛 Troubleshooting
-
-### API Connection Issues
-```bash
-# Test API connection
-python -c "from src.grok_client import GrokClient; GrokClient().test_connection()"
+Create a local `.env` if you prefer:
+```
+XAI_API_KEY=your_key_here
+GROK_MODEL=grok-4-fast-reasoning
+GROK_TIMEOUT=60
+GROK_MAX_RETRIES=3
 ```
 
-### Docker Issues
-```bash
-# Verify Docker is running
-docker info
+---
 
-# Test Docker execution
-docker run --rm alpine echo "Docker works"
-```
+## 🚀 Quick start
 
-### Terminal-Bench Issues
 ```bash
-# Reinstall Terminal-Bench
-pip uninstall terminal-bench
+# 1) Clone
+git clone https://github.com/AndrewTKent/grok-benchmark-evaluation.git
+cd grok-benchmark-evaluation
+
+# 2) (Optional) bootstrap
+bash setup.sh
+
+# 3) Activate venv if setup.sh created one
+source venv/bin/activate  # or your environment
+
+# 4) Install Terminal‑Bench and deps
+pip install -r requirements.txt
 pip install terminal-bench
 
-# Verify installation
-tb --version
+# 5) Download dataset (first run only)
+tb datasets download --dataset terminal-bench-core==0.1.1
+
+# 6) Diagnostic quick test
+python run.py --test
 ```
 
-### Module Import Issues
+---
+
+## 🧭 CLI overview
+
+The entrypoint `run.py` simply dispatches to `src/cli/main.py`.
+
+```
+usage: run.py [options]
+
+Common:
+  --model MODEL
+  --dataset terminal-bench-core==0.1.1
+  --task-id TASK_ID           (repeatable)
+  --n-concurrent INT          (parallel trials)
+  --n-attempts INT            (retries per task)
+  --timeout INT               (seconds per task)
+  --debug
+
+Modes:
+  --list-tasks                List tasks in dataset
+  --test                      Run diagnostic + simple TB run
+  --diagnostic                Only run system diagnostics
+  --enhanced                  Use EnhancedGrokTerminalAgent
+  --compare                   Run baseline vs enhanced back-to-back
+  --inject-failures           (enhanced) enable failure injection
+  --injection-rate FLOAT      (enhanced) injection probability per step
+```
+
+### Examples
+
+**List tasks**
 ```bash
-# Ensure PYTHONPATH is set
+python run.py --list-tasks --dataset terminal-bench-core==0.1.1
+```
+
+**Run a subset with parallelism**
+```bash
+python run.py \
+  --dataset terminal-bench-core==0.1.1 \
+  --n-concurrent 4 \
+  --n-attempts 1 \
+  --timeout 240 \
+  --task-id hello-world \
+  --task-id fix-git \
+  --task-id fix-permissions \
+  --task-id heterogeneous-dates
+```
+
+**Enhanced agent (metrics, safety, loops)**
+```bash
+python run.py \
+  --enhanced \
+  --dataset terminal-bench-core==0.1.1 \
+  --n-concurrent 4 \
+  --task-id hello-world --task-id fix-git
+```
+
+**Comparison (baseline vs enhanced) — now truly parallel**
+```bash
+python run.py \
+  --compare \
+  --dataset terminal-bench-core==0.1.1 \
+  --n-concurrent 4 \
+  --task-id hello-world --task-id fix-git --task-id fix-permissions
+```
+> In this version the **compare** mode forwards `--n-concurrent` to both runs (no more implicit `n_concurrent=1`).
+
+**Full benchmark**
+```bash
+python run.py --n-concurrent 4 --n-attempts 2
+```
+
+**Verbose debug**
+```bash
+python run.py --debug --test
+```
+
+---
+
+## 📡 What runs under the hood
+
+- **Standard path** → `StandardTerminalBenchRunner` + `GrokTerminalAgent`
+- **Enhanced path** → `EnhancedTerminalBenchRunner` + `EnhancedGrokTerminalAgent`
+  - Loop detection (`src/metrics/loop_detector.py`)
+  - Safety checks (`src/metrics/safety_checker.py`)
+  - Optional failure injection (`src/metrics/failure_injector.py`)
+  - Composite score (`src/metrics/scoring.py`)
+- **Live progress** (`_Tailer`) prints lines from:
+  - `*/agent-logs/progress.jsonl` (structured events)
+  - `*/commands.txt` (last seen command), grouped by trial
+- **Grok client** adds request timeouts, retries, and 429 backoff.
+
+---
+
+## 📁 Outputs & analysis
+
+Top‑level `results/` contains timestamped run folders, e.g.:
+```
+results/
+└─ tb_grok-4-fast-reasoning_enhanced_20250925_235959/
+   ├─ <task>/<trial>/agent-logs/progress.jsonl
+   ├─ <task>/<trial>/commands.txt
+   ├─ enhanced_metrics/
+   │  ├─ metrics_<task>.json
+   │  └─ ...
+   ├─ enhanced_analysis.json         # machine‑readable
+   ├─ enhanced_analysis.txt          # human summary
+   └─ *.json                         # TB baseline artifacts if produced
+```
+
+**Enhanced analysis summary includes**  
+- Success rate, composite score, efficiency, recovery, safety
+- Loop statistics and common error patterns
+- Top recommendations to improve agent behavior
+
+---
+
+## 🔍 Troubleshooting
+
+**Docker**
+```bash
+docker info
+docker run --rm alpine echo 'Docker OK'
+```
+
+**Terminal‑Bench**
+```bash
+tb --version
+tb datasets download --dataset terminal-bench-core==0.1.1 --overwrite
+```
+
+**Environment / imports**
+```bash
 export PYTHONPATH=$PWD:$PYTHONPATH
-
-# Test import
-python -c "from src.terminal_agent import GrokTerminalAgent; print('Import successful')"
+python -c "from src.agents.grok_terminal_agent import GrokTerminalAgent; print('Import OK')"
 ```
 
-## 📊 Analyzing Grok's Performance
-
-The improved implementation helps identify Grok's strengths and weaknesses:
-
-### Strengths Observed
-- Strong bash command knowledge
-- Good at file operations
-- Handles multi-step tasks well
-
-### Common Failure Modes
-- May include explanations instead of pure commands
-- Struggles with complex error recovery
-- Sometimes generates overly cautious commands
-
-### Extracting Failure Patterns
-```python
-# Analyze results programmatically
-import json
-from pathlib import Path
-
-# Load latest results
-result_files = sorted(Path("results").glob("benchmark_summary_*.json"))
-with open(result_files[-1]) as f:
-    results = json.load(f)
-
-# Extract failures
-if "benchmark_results" in results:
-    tasks = results["benchmark_results"].get("tasks", [])
-    failures = [t for t in tasks if t.get("status") != "success"]
-    
-    # Analyze failure reasons
-    for task in failures:
-        print(f"Task {task['id']}: {task.get('error', 'unknown error')}")
+**API connectivity**
+```bash
+python -c "from src.clients.grok_client import GrokClient; GrokClient().test_connection()"
 ```
 
-## 🔄 Replication Instructions
+---
 
-To replicate the evaluation:
+## ⚙️ Configuration notes
 
-1. **Environment Setup**
-   ```bash
-   git clone <repo-url>
-   cd grok-benchmark-evaluation
-   ./setup.sh
-   echo "XAI_API_KEY=<your-key>" > .env
-   ```
+- Set `XAI_API_KEY` (or `GROK_API_KEY`) in shell or `.env`.
+- Control model via `--model` or `GROK_MODEL` env.
+- `--n-concurrent` controls **actual** parallelism in all modes, including `--compare`.
+- The enhanced agent is deterministic in early steps and slightly exploratory later (`temperature` ramps beyond step 5).
 
-2. **Run Diagnostic**
-   ```bash
-   source venv/bin/activate
-   python diagnostic.py
-   ```
-
-3. **Execute Benchmark**
-   ```bash
-   # Same parameters as original evaluation
-   python run.py --model grok-2-1212 --dataset terminal-bench-core==0.1.1 --n-concurrent 4
-   ```
-
-4. **Compare Results**
-   Results are timestamped in `results/` for comparison across runs.
-
-## 🚧 Known Limitations
-
-1. **Terminal-Bench Limitations**:
-   - Only tests bash command execution
-   - Limited to single-container tasks
-   - No multi-modal capabilities
-   - May not reflect real-world agent usage patterns
-
-2. **Current Implementation**:
-   - History truncation may lose context in long tasks
-   - Command extraction heuristics may miss edge cases
-   - No fine-tuning for specific task types
-
-## 🔮 Suggested Improvements
-
-1. **Enhanced Command Parsing**: Use a dedicated parser for shell commands
-2. **Task-Specific Prompts**: Optimize prompts based on task categories
-3. **Error Recovery**: Implement smarter error recovery strategies
-4. **Context Management**: Better handling of long conversation histories
+---
 
 ## 📝 License
 
-MIT License - See LICENSE file for details
+MIT — see `LICENSE`.
+
+---
 
 ## 🤝 Contributing
 
-Contributions welcome! Please ensure all tests pass:
+Issues and PRs welcome. Please run:
 ```bash
-python diagnostic.py
+python run.py --diagnostic
 python run.py --test
 ```
