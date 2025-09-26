@@ -49,6 +49,22 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
+# --- Label helpers (add after imports) ---
+
+def _shorten_label(s: str, maxlen: int = 28) -> str:
+    """Middle-ellipsize long task names so ticks don't overflow."""
+    s = str(s)
+    if len(s) <= maxlen:
+        return s
+    keep = maxlen - 1
+    head = keep // 2
+    tail = keep - head
+    return f"{s[:head]}…{s[-tail:]}"
+
+def _auto_fig_height(n_bars: int, base: float = 1.2, per_bar: float = 0.45, max_h: float = 14.0) -> float:
+    """Compute a reasonable figure height based on number of bars."""
+    return min(max_h, base + per_bar * max(1, n_bars))
+
 
 # ---------- IO / Loading (single-run helpers) ----------
 
@@ -196,18 +212,16 @@ def plot_component_bars(df: pd.DataFrame, figs: Path):
 
 
 def plot_failure_patterns(df: pd.DataFrame, figs: Path):
-    """Aggregated failure / violation pattern counts."""
+    """Aggregated failure / violation pattern counts with readable labels."""
     if df.empty:
         return
 
-    # error_patterns is a dict per row -> aggregate
     total = Counter()
     if "error_patterns" in df.columns:
         for d in df["error_patterns"]:
             if isinstance(d, dict):
                 total.update(d)
 
-    # If none, try safety_violations list-of-dicts with 'pattern'
     if not total and "safety_violations" in df.columns:
         vio = Counter()
         for lst in df["safety_violations"]:
@@ -220,15 +234,20 @@ def plot_failure_patterns(df: pd.DataFrame, figs: Path):
     if not total:
         return
 
-    keys, vals = zip(*sorted(total.items(), key=lambda x: x[1], reverse=True))
-    plt.figure()
-    plt.bar(keys, vals)
-    plt.xticks(rotation=45, ha="right")
+    items = sorted(total.items(), key=lambda x: x[1], reverse=True)
+    keys, vals = zip(*items)
+    disp = [_shorten_label(k, 28) for k in keys]
+
+    plt.figure(figsize=(10, 4 + 0.25 * len(disp)))
+    plt.bar(disp, vals)
+    plt.xticks(rotation=45, ha="right", fontsize=8)
     plt.ylabel("Count")
     plt.title("Failure / Violation pattern counts")
     plt.tight_layout()
+    plt.gcf().subplots_adjust(bottom=0.25)
     plt.savefig(figs / "failure_patterns.png", dpi=180)
     plt.close()
+
 
 
 def plot_loops_hist(df: pd.DataFrame, figs: Path):
@@ -267,38 +286,60 @@ def plot_steps_vs_time(df: pd.DataFrame, figs: Path):
 
 # ---------- Scalable time visualizations (single-run) ----------
 
-def plot_time_top_bottom(df: pd.DataFrame, figs: Path, top_n: int = 15, bottom_n: int = 15):
-    """Horizontal bars for the fastest and slowest tasks (top/bottom N)."""
+def plot_time_top_bottom(df: pd.DataFrame, figs: Path, top_n: int = 15, bottom_n: int = 15, label_maxlen: int = 28):
+    """Horizontal bars for the fastest and slowest tasks (top/bottom N) with readable labels."""
     if df.empty or "time_taken" not in df.columns:
         return
+
     d = df.copy()
+    # Ensure we have task_id; fabricate stable names if missing
     if "task_id" not in d.columns:
         d["task_id"] = [f"task_{i}" for i in range(len(d))]
     d = d[~d["time_taken"].isna()]
     if d.empty:
         return
 
+    # Sort once
     d_sorted = d.sort_values("time_taken")
-    fastest = d_sorted.head(top_n)
-    slowest = d_sorted.tail(bottom_n)
+    fastest = d_sorted.head(top_n).copy()
+    slowest = d_sorted.tail(bottom_n).copy()
 
-    # Fastest
-    plt.figure()
-    plt.barh(fastest["task_id"], fastest["time_taken"])
-    plt.xlabel("Time (s)")
-    plt.title(f"Fastest {len(fastest)} tasks")
-    plt.tight_layout()
-    plt.savefig(figs / "time_fastest_topN.png", dpi=180)
-    plt.close()
+    # Create shortened display labels
+    fastest["label"] = fastest["task_id"].apply(lambda s: _shorten_label(s, label_maxlen))
+    slowest["label"] = slowest["task_id"].apply(lambda s: _shorten_label(s, label_maxlen))
 
-    # Slowest
-    plt.figure()
-    plt.barh(slowest["task_id"], slowest["time_taken"])
-    plt.xlabel("Time (s)")
-    plt.title(f"Slowest {len(slowest)} tasks")
-    plt.tight_layout()
-    plt.savefig(figs / "time_slowest_bottomN.png", dpi=180)
-    plt.close()
+    # --- Fastest ---
+    if not fastest.empty:
+        h = _auto_fig_height(len(fastest))
+        plt.figure(figsize=(8, h))
+        plt.barh(fastest["label"], fastest["time_taken"])
+        plt.xlabel("Time (s)")
+        plt.title(f"Fastest {len(fastest)} tasks")
+        # Put the smallest time at the top
+        plt.gca().invert_yaxis()
+        # Smaller tick font and extra left margin so labels don’t clip
+        plt.yticks(fontsize=8)
+        plt.tight_layout()
+        # Nudge left a bit more for long labels
+        plt.gcf().subplots_adjust(left=0.35)
+        plt.savefig(figs / "time_fastest_topN.png", dpi=180)
+        plt.close()
+
+    # --- Slowest ---
+    if not slowest.empty:
+        h = _auto_fig_height(len(slowest))
+        plt.figure(figsize=(8, h))
+        plt.barh(slowest["label"], slowest["time_taken"])
+        plt.xlabel("Time (s)")
+        plt.title(f"Slowest {len(slowest)} tasks")
+        # Here we want the slowest (largest) at the top -> invert after barh
+        plt.gca().invert_yaxis()
+        plt.yticks(fontsize=8)
+        plt.tight_layout()
+        plt.gcf().subplots_adjust(left=0.35)
+        plt.savefig(figs / "time_slowest_bottomN.png", dpi=180)
+        plt.close()
+
 
 
 def plot_time_ecdf(df: pd.DataFrame, figs: Path):
@@ -520,7 +561,7 @@ def main():
     plot_steps_vs_time(df, figs)
 
     # Scalable time visualizations
-    plot_time_top_bottom(df, figs, top_n=15, bottom_n=15)
+    plot_time_top_bottom(df, figs, top_n=3, bottom_n=3)
     plot_time_ecdf(df, figs)
     plot_time_hist_log(df, figs)
     plot_time_box(df, figs)
