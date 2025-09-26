@@ -113,27 +113,89 @@ class TBRunnersBase:
         return env
 
     def _parse_results(self, output_dir: Path, return_code: int, output_lines: List[str], elapsed_time: float) -> Dict[str, Any]:
-        results: Dict[str,Any] = {
+        results: Dict[str, Any] = {
             "status": "completed" if return_code == 0 else "failed",
             "return_code": return_code,
             "elapsed_time": elapsed_time,
-            "output_dir": str(output_dir)
+            "output_dir": str(output_dir),
         }
-        for pattern in ["results.json","summary.json","*.json"]:
-            for f in output_dir.glob(pattern):
-                try:
-                    with f.open(encoding="utf-8") as fh:
-                        data = json.load(fh)
-                        results["benchmark_results"] = data
-                        if isinstance(data, dict) and "tasks" in data:
-                            tasks = data["tasks"]; successes = sum(1 for t in tasks if t.get("status")=="success")
-                            results["num_tasks"] = len(tasks)
-                            if tasks: results["success_rate"] = successes/len(tasks)
-                        break
-                except Exception:
-                    continue
-        if "benchmark_results" not in results: results["raw_output"] = output_lines
+
+        # 1) Collect every results/summary json recursively (TB scatters them)
+        json_paths: List[Path] = []
+        json_paths.extend(output_dir.rglob("results.json"))
+        json_paths.extend(output_dir.rglob("summary.json"))
+
+        # Prefer a run-level summary if present, but still aggregate trials below
+        run_level: Dict[str, Any] | None = None
+        trials: List[Dict[str, Any]] = []
+        successes = 0
+        total = 0
+
+        for p in sorted(set(json_paths)):
+            try:
+                with p.open(encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                continue
+
+            # Heuristic: a "run-level" file often lives directly under the run timestamp dir
+            # Keep the first reasonable candidate as "benchmark_results" for reference
+            if run_level is None and isinstance(data, dict):
+                # If it looks like a summary (has "tasks") or lives at shallow depth, keep it
+                if ("tasks" in data and isinstance(data["tasks"], list)) or p.parent == output_dir:
+                    run_level = {"path": str(p), "data": data}
+
+            # Schema A: run summary with {"tasks":[{"status": "..."}]}
+            if isinstance(data, dict) and "tasks" in data and isinstance(data["tasks"], list):
+                for t in data["tasks"]:
+                    status = (t.get("status") or "").lower()
+                    ok = status == "success"
+                    trials.append({
+                        "source": str(p),
+                        "task_id": t.get("task_id") or t.get("name"),
+                        "status": status,
+                        "success": ok,
+                    })
+                    total += 1
+                    successes += 1 if ok else 0
+                continue
+
+            # Schema B: per-trial object with "is_resolved"
+            if isinstance(data, dict) and ("is_resolved" in data or "failure_mode" in data):
+                ok = bool(data.get("is_resolved", False))
+                trials.append({
+                    "source": str(p),
+                    "task_id": data.get("task_id"),
+                    "trial_name": data.get("trial_name"),
+                    "success": ok,
+                    "failure_mode": data.get("failure_mode", "unset"),
+                })
+                total += 1
+                successes += 1 if ok else 0
+                continue
+
+            # Other JSON files (enhanced analysis, metrics, etc.) are ignored for success rate
+            # but we still keep a reference to one "benchmark_results" file for convenience.
+
+        # 2) Attach a representative benchmark_results blob if we found one
+        if run_level is not None:
+            results["benchmark_results"] = run_level["data"]
+            results["benchmark_results_path"] = run_level["path"]
+
+        # 3) Compute success metrics from aggregated trials
+        results["num_trials"] = total
+        if total > 0:
+            results["successes"] = successes
+            results["success_rate"] = successes / total
+        else:
+            # Fall back: if we couldn't find any trials, at least return raw logs
+            results["raw_output"] = output_lines
+            results.setdefault("success_rate", 0.0)
+
+        # 4) Include a small sample of trials to make debugging easier
+        results["trials_sample"] = trials[:20]
         return results
+
 
     # util for listing tasks (extracted from your run.py)
     def list_available_tasks(self, dataset: str) -> int:
