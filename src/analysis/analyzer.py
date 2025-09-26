@@ -21,15 +21,39 @@ class EnhancedAnalyzer:
         self.load_metrics()
 
     def load_metrics(self) -> None:
-        """Load all enhanced metrics files in the run directory."""
-        if not self.enhanced_metrics_dir.exists():
-            return
-        for mf in self.enhanced_metrics_dir.glob("metrics_*.json"):
+        """Load all enhanced metrics files in the run directory.
+
+        Finds any files matching `enhanced_metrics/metrics_*.json` anywhere under
+        `self.results_dir` (per-trial locations) and also supports the legacy
+        run-root location at `self.results_dir/enhanced_metrics/`.
+        """
+        self.metrics_data = []
+        seen: set[Path] = set()
+
+        # 1) Legacy run-root location (if present)
+        legacy_dir = self.results_dir / "enhanced_metrics"
+        if legacy_dir.exists():
+            for mf in legacy_dir.glob("metrics_*.json"):
+                if mf in seen:
+                    continue
+                try:
+                    with mf.open(encoding="utf-8") as f:
+                        self.metrics_data.append(json.load(f))
+                    seen.add(mf)
+                except Exception as e:
+                    print(f"Error loading {mf}: {e}")
+
+        # 2) Preferred: recursively gather per-trial metrics
+        for mf in self.results_dir.rglob("enhanced_metrics/metrics_*.json"):
+            if mf in seen:
+                continue
             try:
-                with mf.open() as f:
+                with mf.open(encoding="utf-8") as f:
                     self.metrics_data.append(json.load(f))
+                seen.add(mf)
             except Exception as e:
                 print(f"Error loading {mf}: {e}")
+
 
     def analyze(self) -> Dict[str, Any]:
         """Return a composite analysis dictionary."""
