@@ -37,26 +37,110 @@ def ensure_figs_dir(run_dir: Path) -> Path:
     figs.mkdir(parents=True, exist_ok=True)
     return figs
 
-def plot_success_time(df: pd.DataFrame, figs: Path):
-    """Per-task time (bars) with success markers."""
-    if df.empty: return
-    df2 = df.copy()
-    df2["success"] = df2["success"].astype(bool)
-    df2["task_id"] = df2.get("task_id", pd.Series([f"task_{i}" for i in range(len(df2))]))
-    df2 = df2.sort_values("time_taken")
+def plot_time_top_bottom(df: pd.DataFrame, figs: Path, top_n: int = 15, bottom_n: int = 15):
+    """Horizontal bars for the fastest and slowest tasks (top/bottom N)."""
+    if df.empty or "time_taken" not in df.columns: return
+    d = df.copy()
+    d["task_id"] = d.get("task_id", pd.Series([f"task_{i}" for i in range(len(d))]))
+    d = d[~d["time_taken"].isna()]
+    if d.empty: return
+
+    d_sorted = d.sort_values("time_taken")
+    fastest = d_sorted.head(top_n)
+    slowest = d_sorted.tail(bottom_n)
+
+    # Fastest
     plt.figure()
-    plt.bar(df2["task_id"], df2["time_taken"])
-    # Success markers as dots above bars
-    y = df2["time_taken"].to_numpy()
-    x = np.arange(len(df2))
-    succ = df2["success"].to_numpy()
-    plt.scatter(x[succ], y[succ]*1.02 + 0.01, s=30)  # small dot for successes
-    plt.xticks(rotation=45, ha="right")
-    plt.ylabel("Time (s)")
-    plt.title("Per-task time (bars) with success markers (dots)")
+    plt.barh(fastest["task_id"], fastest["time_taken"])
+    plt.xlabel("Time (s)")
+    plt.title(f"Fastest {len(fastest)} tasks")
     plt.tight_layout()
-    plt.savefig(figs / "time_per_task.png", dpi=180)
+    plt.savefig(figs / "time_fastest_topN.png", dpi=180)
     plt.close()
+
+    # Slowest
+    plt.figure()
+    plt.barh(slowest["task_id"], slowest["time_taken"])
+    plt.xlabel("Time (s)")
+    plt.title(f"Slowest {len(slowest)} tasks")
+    plt.tight_layout()
+    plt.savefig(figs / "time_slowest_bottomN.png", dpi=180)
+    plt.close()
+
+
+def plot_time_ecdf(df: pd.DataFrame, figs: Path):
+    """ECDF of task durations (robust for large N)."""
+    if df.empty or "time_taken" not in df.columns: return
+    x = pd.to_numeric(df["time_taken"], errors="coerce").dropna().sort_values().to_numpy()
+    if x.size == 0: return
+    y = np.arange(1, x.size + 1) / x.size
+    plt.figure()
+    plt.plot(x, y, marker="", linewidth=1.5)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Fraction of tasks ≤ t")
+    plt.title("ECDF of task durations")
+    plt.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(figs / "time_ecdf.png", dpi=180)
+    plt.close()
+
+
+def plot_time_hist_log(df: pd.DataFrame, figs: Path):
+    """Histogram of durations with optional log x-scale for long tails."""
+    if df.empty or "time_taken" not in df.columns: return
+    x = pd.to_numeric(df["time_taken"], errors="coerce").dropna()
+    if x.empty: return
+    plt.figure()
+    plt.hist(x, bins=min(30, max(10, int(np.sqrt(len(x))))))
+    plt.xlabel("Time (s)")
+    plt.ylabel("Tasks")
+    plt.title("Distribution of task durations")
+    plt.tight_layout()
+    plt.savefig(figs / "time_hist.png", dpi=180)
+    plt.close()
+
+    # Log-scale variant (only if strictly positive)
+    xp = x[x > 0]
+    if not xp.empty:
+        plt.figure()
+        plt.hist(xp, bins=min(30, max(10, int(np.sqrt(len(xp))))))
+        plt.xscale("log")
+        plt.xlabel("Time (s) [log scale]")
+        plt.ylabel("Tasks")
+        plt.title("Distribution of task durations (log scale)")
+        plt.tight_layout()
+        plt.savefig(figs / "time_hist_log.png", dpi=180)
+        plt.close()
+
+
+def plot_time_box(df: pd.DataFrame, figs: Path):
+    """Summary five-number view for durations; add success split if available."""
+    if df.empty or "time_taken" not in df.columns: return
+    x = pd.to_numeric(df["time_taken"], errors="coerce").dropna()
+    if x.empty: return
+
+    # Overall boxplot
+    plt.figure()
+    plt.boxplot([x], vert=True, labels=["All tasks"], showfliers=False)
+    plt.ylabel("Time (s)")
+    plt.title("Task duration summary (no outliers shown)")
+    plt.tight_layout()
+    plt.savefig(figs / "time_box.png", dpi=180)
+    plt.close()
+
+    # Split by success (if present)
+    if "success" in df.columns:
+        a = pd.to_numeric(df.loc[df["success"].astype(bool), "time_taken"], errors="coerce").dropna()
+        b = pd.to_numeric(df.loc[~df["success"].astype(bool), "time_taken"], errors="coerce").dropna()
+        if len(a) and len(b):
+            plt.figure()
+            plt.boxplot([a, b], vert=True, labels=["Success", "Failure"], showfliers=False)
+            plt.ylabel("Time (s)")
+            plt.title("Task duration by outcome (no outliers)")
+            plt.tight_layout()
+            plt.savefig(figs / "time_box_by_outcome.png", dpi=180)
+            plt.close()
+
 
 def plot_component_bars(df: pd.DataFrame, figs: Path):
     """Average component scores."""
@@ -172,7 +256,10 @@ def main():
     plot_component_bars(df, figs)
     plot_failure_patterns(df, figs)
     plot_loops_hist(df, figs)
-    plot_steps_vs_time(df, figs)
+    plot_time_top_bottom(df, figs, top_n=15, bottom_n=15)
+    plot_time_ecdf(df, figs)
+    plot_time_hist_log(df, figs)
+    plot_time_box(df, figs)
 
     print(f"Figures written to: {figs}")
 
