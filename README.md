@@ -87,7 +87,6 @@ source venv/bin/activate  # or your environment
 
 # 4) Install Terminal‑Bench and deps
 pip install -r requirements.txt
-pip install terminal-bench
 
 # 5) Download dataset (first run only)
 tb datasets download --dataset terminal-bench-core==0.1.1
